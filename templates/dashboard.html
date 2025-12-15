@@ -1,0 +1,772 @@
+{% extends "base.html" %}
+{% block content %}
+{% set perms = permissions %}
+<style>
+  .card-header-line {
+    display: flex;
+    align-items: center;
+    margin-bottom: 12px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid #e0e0e0;
+  }
+</style>
+<ul class="nav nav-tabs mb-3" id="mainTabs" role="tablist">
+  <li class="nav-item" role="presentation">
+    <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-home" type="button">Главная</button>
+  </li>
+  {% if "tables" in perms %}
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-tables" type="button">Таблицы</button>
+  </li>
+  {% endif %}
+  {% if "inventory" in perms %}
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-inv" type="button">Запасы</button>
+  </li>
+  {% endif %}
+  {% if "orders" in perms %}
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-orders" type="button">Заказы</button>
+  </li>
+  {% endif %}
+  {% if "menu" in perms %}
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-menu" type="button">Меню</button>
+  </li>
+  {% endif %}
+  {% if "reports" in perms %}
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-reports" type="button">Отчёты</button>
+  </li>
+  {% endif %}
+  {% if "admin" in perms %}
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-users" type="button">Пользователи</button>
+  </li>
+  {% endif %}
+  {% if "query" in perms %}
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-query" type="button">SQL</button>
+  </li>
+  {% endif %}
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-help" type="button">Справка</button>
+  </li>
+</ul>
+
+<div class="tab-content">
+  <div class="tab-pane fade show active" id="tab-home">
+    <div class="card p-3 mb-3">
+      <div class="card-header-line">
+        <h5 class="mb-0">Обзор</h5>
+        <span class="badge bg-secondary ms-2">Dashboard</span>
+      </div>
+      <div class="row g-3">
+        <div class="col-md-4">
+          <div class="p-3 bg-light border rounded">
+            <div class="text-muted small">Пользователь</div>
+            <div class="fw-bold">{{ username }}</div>
+            <div class="text-muted small">Роль: {{ role }}</div>
+            {% if current_restaurant %}
+            <div class="text-muted small">Текущий ресторан: {{ current_restaurant }}</div>
+            {% endif %}
+          </div>
+        </div>
+        <div class="col-md-8">
+          <div class="p-3 bg-light border rounded">
+            <div class="d-flex justify-content-between">
+              <div>
+                <div class="text-muted small">Заказы (всего)</div>
+                <div class="fw-bold">{{ stats.orders }}</div>
+              </div>
+              <div>
+                <div class="text-muted small">Запасы (строк)</div>
+                <div class="fw-bold">{{ stats.stocks }}</div>
+              </div>
+              <div>
+                <div class="text-muted small">Блюда</div>
+                <div class="fw-bold">{{ stats.dishes }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card p-3">
+      <div class="card-header-line">
+        <h6 class="mb-0">Статистика по ресторанам</h6>
+        <span class="badge bg-secondary ms-2">Analytics</span>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm table-striped">
+          <thead>
+            <tr>
+              <th>Ресторан</th>
+              <th>Заказы (шт)</th>
+              <th>Сумма заказов</th>
+              <th>Строк в запасах</th>
+              <th>Суммарное кол-во</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for r in summary %}
+            <tr>
+              <td>{{ r.restaurant_name }}</td>
+              <td>{{ r.orders_count }}</td>
+              <td>{{ r.orders_sum }}</td>
+              <td>{{ r.stocks_count }}</td>
+              <td>{{ r.stocks_qty }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="row mt-4">
+        <div class="col-md-6">
+          <div class="card p-3">
+            <div class="card-header-line">
+              <h6 class="mb-0">Заказы по ресторанам (сумма)</h6>
+              <span class="badge bg-secondary ms-2">Chart</span>
+            </div>
+            <div class="chart-container">
+              <canvas id="chartOrdersSum"></canvas>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-6">
+          <div class="card p-3">
+            <div class="card-header-line">
+              <h6 class="mb-0">Заказы по статусам</h6>
+              <span class="badge bg-secondary ms-2">Chart</span>
+            </div>
+            <div class="chart-container">
+              <canvas id="chartStatus"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  {% if "query" in perms %}
+  <div class="tab-pane fade" id="tab-query">
+    <div class="card p-3">
+      <div class="card-header-line">
+        <h6 class="mb-0">SQL</h6>
+        <span class="badge bg-secondary ms-2">Query</span>
+      </div>
+      <form method="post" action="{{ url_for('action_query_run') }}">
+        <div class="mb-3">
+          <textarea class="form-control" name="sql" rows="5" placeholder="SELECT * FROM restaurants LIMIT 20;"></textarea>
+        </div>
+        <button class="btn btn-primary">Выполнить</button>
+      </form>
+      {% if session.query_last %}
+      <div class="table-responsive mt-3">
+        <table class="table table-sm table-striped">
+          <thead><tr>{% for c in session.query_last.cols %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+          <tbody>
+          {% for row in session.query_last.rows %}
+            <tr>{% for c in session.query_last.cols %}<td>{{ row[c] }}</td>{% endfor %}</tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if "tables" in perms %}
+  <div class="tab-pane fade" id="tab-tables">
+    <div class="card p-3 mb-3">
+      <div class="card-header-line">
+        <h6 class="mb-0">Таблицы</h6>
+        <span class="badge bg-secondary ms-2">Tables</span>
+      </div>
+      <form method="post" action="{{ url_for('action_tables_view') }}">
+        <div class="row g-2 align-items-end">
+          <div class="col-md-3">
+            <label class="form-label">Таблица</label>
+            <input class="form-control" list="tables-list" name="table" placeholder="restaurants">
+            <datalist id="tables-list">
+              {% for t in tables %}
+              <option value="{{ t }}">
+              {% endfor %}
+            </datalist>
+          </div>
+          <div class="col-md-5">
+            <label class="form-label">Фильтр (WHERE)</label>
+            <input class="form-control" name="where" placeholder="restaurant_id = 1">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label">Лимит</label>
+            <input class="form-control" name="limit" value="200">
+          </div>
+          <div class="col-md-2">
+            <button class="btn btn-primary w-100">Загрузить</button>
+          </div>
+        </div>
+      </form>
+    </div>
+    {% if session.tables_last %}
+    <div class="card p-3">
+      <div class="card-header-line">
+        <h6 class="mb-0">Результат: {{ session.tables_last.table }}</h6>
+        <span class="badge bg-secondary ms-2">Tables</span>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm table-striped">
+          <thead><tr>{% for c in session.tables_last.cols %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+          <tbody>
+          {% for row in session.tables_last.rows %}
+            <tr>{% for c in session.tables_last.cols %}<td>{{ row[c] }}</td>{% endfor %}</tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+    {% if "admin" in perms %}
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if "inventory" in perms %}
+  <div class="tab-pane fade" id="tab-inv">
+    <div class="card p-3">
+      <div class="card-header-line">
+        <h6 class="mb-0">Запасы</h6>
+        <span class="badge bg-secondary ms-2">Inventory</span>
+      </div>
+      <form method="post" action="{{ url_for('action_inventory_load') }}" class="row g-2 align-items-end mb-3">
+        <div class="col-md-3">
+          <label class="form-label">Ресторан</label>
+          <select class="form-select" name="rest_id">
+            {% for r in restaurants %}
+            <option value="{{ r.id }}">{{ r.id }} - {{ r.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-2">
+          <button class="btn btn-primary w-100">Обновить</button>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">Новое количество</label>
+          <input class="form-control" name="qty" form="inv-update-form">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Срок годности (ГГГГ-ММ-ДД)</label>
+          <input class="form-control" name="expiry" form="inv-update-form">
+        </div>
+        <div class="col-md-2 d-flex gap-2">
+          <button class="btn btn-outline-primary w-50" form="inv-update-form" onclick="return collectSelectedStocks()">Обновить</button>
+          <button class="btn btn-outline-secondary w-50" form="inv-request-form" onclick="return collectSelectedStocks()">Заявка</button>
+        </div>
+      </form>
+      <form id="inv-update-form" method="post" action="{{ url_for('action_inventory_update') }}">
+        <input type="hidden" name="selected_ids" id="selected_ids">
+        <input type="hidden" name="qty">
+        <input type="hidden" name="expiry">
+      </form>
+      <form id="inv-request-form" method="post" action="{{ url_for('action_inventory_request') }}">
+        <input type="hidden" name="selected_ids" id="req_selected_ids">
+        <input type="hidden" name="qty" id="req_qty">
+      </form>
+      <div class="table-responsive mt-3">
+        <table class="table table-sm table-striped align-middle" id="inv-table">
+          <thead>
+            <tr>
+              <th></th>
+              <th>ID</th><th>Ресторан</th><th>ID ингредиента</th><th>Ингредиент</th><th>Количество</th><th>Ед.</th><th>Годен до</th><th>Мин. порог</th><th>Партия</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% if stocks_last %}
+            {% for row in stocks_last %}
+            <tr data-stock="{{ row.id }}" data-rest="{{ row.restaurant_id }}" data-ing="{{ row.ingredient_id }}" data-min="{{ row.min_threshold }}">
+              <td><input type="checkbox" name="stock_pick" value="{{ row.id }}"></td>
+              <td>{{ row.id }}</td>
+              <td>{{ row.restaurant_id }}</td>
+              <td>{{ row.ingredient_id }}</td>
+              <td>{{ row.ingredient_name }}</td>
+              <td>{{ row.qty }}</td>
+              <td>{{ row.unit }}</td>
+              <td>{{ row.expiry_date }}</td>
+              <td>{{ row.min_threshold }}</td>
+              <td>{{ row.batch_no }}</td>
+            </tr>
+            {% endfor %}
+          {% else %}
+            <tr><td colspan="10" class="text-muted">Нет данных. Нажмите «Обновить».</td></tr>
+          {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if "orders" in perms %}
+  <div class="tab-pane fade" id="tab-orders">
+    <div class="card p-3 mb-3">
+      <div class="card-header-line">
+        <h6 class="mb-0">Заказы</h6>
+        <span class="badge bg-secondary ms-2">Orders</span>
+      </div>
+      <form method="post" action="{{ url_for('action_orders_load') }}" class="row g-2 align-items-end">
+        <div class="col-md-3">
+          <label class="form-label">Ресторан</label>
+          <select class="form-select" name="rest_id">
+            <option value="">Любой</option>
+            {% for r in restaurants %}<option value="{{ r.id }}">{{ r.id }} - {{ r.name }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">Статус</label>
+          <select class="form-select" name="status">
+            <option value="">Любой</option>
+            {% for s in ["new","confirmed","preparing","ready","served","completed","cancelled"] %}
+            <option value="{{s}}">{{s}}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-2">
+          <button class="btn btn-primary w-100">Показать заказы</button>
+        </div>
+      </form>
+      {% if orders_last %}
+      <div class="table-responsive mt-3">
+        <table class="table table-sm table-striped">
+          <thead><tr><th>ID</th><th>Ресторан</th><th>Стол</th><th>Гость</th><th>Статус</th><th>Создан</th><th>Сумма</th></tr></thead>
+          <tbody>
+          {% for o in orders_last %}
+            <tr>
+              <td>{{ o.id }}</td><td>{{ o.restaurant_id }}</td><td>{{ o.table_number }}</td><td>{{ o.guest_name }}</td><td>{{ o.status }}</td><td>{{ o.created_at }}</td><td>{{ o.total_amount }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </div>
+    <div class="card p-3 mb-3">
+      <div class="card-header-line">
+        <h6 class="mb-0">Создать заказ</h6>
+        <span class="badge bg-secondary ms-2">Orders</span>
+      </div>
+      <form method="post" action="{{ url_for('action_orders_create') }}" class="row g-2">
+        <div class="col-md-2">
+          <select class="form-select" name="rest_id">
+            {% for r in restaurants %}<option value="{{ r.id }}">{{ r.id }} - {{ r.name }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-md-2"><input class="form-control" name="table" placeholder="Стол"></div>
+        <div class="col-md-2"><input class="form-control" name="guest" placeholder="Гость"></div>
+        <div class="col-md-2">
+          <select class="form-select" name="status">
+            {% for s in ["new","confirmed","preparing","ready","served","completed","cancelled"] %}
+            <option value="{{s}}">{{s}}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-2"><input class="form-control" name="waiter" placeholder="ID официанта"></div>
+        <div class="col-md-2"><input class="form-control" name="scheduled" placeholder="YYYY-MM-DD HH:MM"></div>
+        <div class="col-md-2 mt-2"><input class="form-control" name="total" placeholder="Сумма"></div>
+        <div class="col-md-2 mt-2"><button class="btn btn-primary w-100">Создать</button></div>
+      </form>
+    </div>
+    <div class="card p-3">
+      <div class="card-header-line">
+        <h6 class="mb-0">Добавить позицию</h6>
+        <span class="badge bg-secondary ms-2">Orders</span>
+      </div>
+      <form method="post" action="{{ url_for('action_orders_add_item') }}" class="row g-2">
+        <div class="col-md-3"><input class="form-control" name="order_id" placeholder="UUID заказа" required></div>
+        <div class="col-md-2"><input class="form-control" name="dish_id" placeholder="ID блюда" required></div>
+        <div class="col-md-2"><input class="form-control" name="qty" placeholder="Количество" value="1"></div>
+        <div class="col-md-2"><input class="form-control" name="price" placeholder="Цена"></div>
+        <div class="col-md-2"><button class="btn btn-outline-primary w-100">Добавить</button></div>
+      </form>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if "menu" in perms %}
+  <div class="tab-pane fade" id="tab-menu">
+    <div class="card p-3">
+      <div class="card-header-line">
+        <h6 class="mb-0">Фильтр блюд</h6>
+        <span class="badge bg-secondary ms-2">Menu</span>
+      </div>
+      <form method="post" action="{{ url_for('action_menu_filter') }}" class="row g-2">
+        <div class="col-md-2">
+          <select class="form-select" name="rest_id">
+            <option value="">Любой</option>
+            {% for r in restaurants %}<option value="{{ r.id }}">{{ r.id }} - {{ r.name }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-md-2"><input class="form-control" name="category" placeholder="Категория"></div>
+        <div class="col-md-2">
+          <select class="form-select" name="available">
+            <option value="">Любой</option>
+            <option value="yes">Доступно</option>
+            <option value="no">Недоступно</option>
+          </select>
+        </div>
+        <div class="col-md-2"><input class="form-control" name="price_min" placeholder="цена >="></div>
+        <div class="col-md-2"><input class="form-control" name="price_max" placeholder="цена <="></div>
+        <div class="col-md-2"><input class="form-control" name="keyword" placeholder="ключевое слово"></div>
+        <div class="col-md-2 mt-2"><button class="btn btn-primary w-100">Применить</button></div>
+      </form>
+      {% if session.menu_last %}
+      <div class="table-responsive mt-3">
+        <table class="table table-sm table-striped">
+          <thead><tr><th>ID</th><th>Ресторан</th><th>Блюдо</th><th>Категория</th><th>Цена</th><th>Время</th><th>Доступно</th></tr></thead>
+          <tbody>
+          {% for r in session.menu_last %}
+            <tr>
+              <td>{{ r.id }}</td><td>{{ r.restaurant_id }}</td><td>{{ r.name }}</td>
+              <td>{{ r.category }}</td><td>{{ r.price }}</td><td>{{ r.prep_time_minutes }}</td><td>{{ r.is_available }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if "reports" in perms %}
+  <div class="tab-pane fade" id="tab-reports">
+    <div class="card p-3">
+      <div class="card-header-line">
+        <h6 class="mb-0">Отчёты</h6>
+        <span class="badge bg-secondary ms-2">Reports</span>
+      </div>
+      <form method="post" action="{{ url_for('action_reports_run') }}" class="row g-2">
+        <div class="col-md-3">
+          <select class="form-select" name="report">
+            <option value="orders_per_restaurant">Orders per restaurant</option>
+            <option value="top_dishes">Top dishes</option>
+            <option value="low_stock">Low stock</option>
+            <option value="expiring">Expiring</option>
+            <option value="orders_by_status">Orders by status</option>
+          </select>
+        </div>
+        <div class="col-md-3">
+          <select class="form-select" name="rest_id">
+            <option value="">Any restaurant</option>
+            {% for r in restaurants %}<option value="{{ r.id }}">{{ r.id }} - {{ r.name }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-md-2">
+          <button class="btn btn-primary w-100">Run</button>
+        </div>
+      </form>
+      {% if session.report_last %}
+      <div class="table-responsive mt-3">
+        <table class="table table-sm table-striped">
+          <thead><tr>{% for c in session.report_last.cols %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+          <tbody>
+          {% for row in session.report_last.rows %}
+            <tr>{% for c in session.report_last.cols %}<td>{{ row[c] }}</td>{% endfor %}</tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if "admin" in perms %}
+  <div class="tab-pane fade" id="tab-users">
+    <div class="card p-3">
+      <div class="card-header-line">
+        <h6 class="mb-0">Создание пользователей</h6>
+        <span class="badge bg-secondary ms-2">Users</span>
+      </div>
+      <form method="post" action="{{ url_for('action_users_create') }}">
+        <div class="row g-3">
+          <div class="col-md-3">
+            <label class="form-label">Username</label>
+            <input class="form-control" name="username" required>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Password</label>
+            <input class="form-control" type="password" name="password" required>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Confirm</label>
+            <input class="form-control" type="password" name="confirm" required>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Role</label>
+            <select class="form-select" name="role" required>
+              {% for r in roles %}
+              <option value="{{ r }}">{{ r }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Restaurant (optional)</label>
+            <select class="form-select" name="restaurant">
+              <option value="">—</option>
+              {% for r in restaurants %}
+              <option value="{{ r.id }}">{{ r.id }} - {{ r.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <div class="mt-3">
+          <button class="btn btn-primary">Register user</button>
+        </div>
+      </form>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if "query" in perms %}
+  <div class="tab-pane fade" id="tab-query">
+    <div class="card p-3">
+      <div class="card-header-line">
+        <h6 class="mb-0">SQL</h6>
+        <span class="badge bg-secondary ms-2">Query</span>
+      </div>
+      <form method="post" action="{{ url_for('action_query_run') }}">
+        <div class="mb-3">
+          <textarea class="form-control" name="sql" rows="5" placeholder="SELECT * FROM restaurants LIMIT 20;"></textarea>
+        </div>
+        <button class="btn btn-primary">Выполнить</button>
+      </form>
+      {% if session.query_last %}
+      <div class="table-responsive mt-3">
+        <table class="table table-sm table-striped">
+          <thead><tr>{% for c in session.query_last.cols %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+          <tbody>
+          {% for row in session.query_last.rows %}
+            <tr>{% for c in session.query_last.cols %}<td>{{ row[c] }}</td>{% endfor %}</tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="tab-pane fade" id="tab-help">
+    <div class="card p-3">
+      <div class="card-header-line">
+        <h5 class="mb-0">Справка</h5>
+        <span class="badge bg-secondary ms-2">Help</span>
+      </div>
+      <p class="mb-2 text-muted small">Краткий гайд по использованию интерфейса.</p>
+      <div class="row gy-2 small">
+        <div class="col-md-6">
+          <div class="p-2 border rounded bg-light">
+            <strong>Быстрый старт</strong>
+            <ul class="mb-0">
+              <li>Залогиньтесь (или зарегистрируйтесь, кроме admin).</li>
+              <li>Роль выбирает доступные вкладки.</li>
+              <li>По умолчанию данные уже подгружены (запасы, заказы, меню, отчёт).</li>
+            </ul>
+          </div>
+        </div>
+        <div class="col-md-6">
+          <div class="p-2 border rounded bg-light">
+            <strong>Роли (права)</strong>
+            <ul class="mb-0">
+              <li>admin: всё, включая управление пользователями.</li>
+              <li>manager: запасы, заказы, меню, отчёты, таблицы.</li>
+              <li>waiter: заказы, меню.</li>
+              <li>chef: запасы, заказы, меню.</li>
+              <li>analyst: таблицы, SQL, меню, отчёты.</li>
+            </ul>
+          </div>
+        </div>
+        <div class="col-md-6">
+          <div class="p-2 border rounded bg-light">
+            <strong>Запасы</strong>
+            <ul class="mb-0">
+              <li>Выберите строку → обновите количество/срок годности или создайте заявку.</li>
+              <li>Кнопка «Обновить» перезагружает список по ресторану.</li>
+            </ul>
+          </div>
+        </div>
+        <div class="col-md-6">
+          <div class="p-2 border rounded bg-light">
+            <strong>Заказы</strong>
+            <ul class="mb-0">
+              <li>«Показать заказы» — фильтр по ресторану/статусу.</li>
+              <li>Ниже формы: создать заказ, добавить позицию.</li>
+            </ul>
+          </div>
+        </div>
+        <div class="col-md-6">
+          <div class="p-2 border rounded bg-light">
+            <strong>Меню</strong>
+            <ul class="mb-0">
+              <li>Фильтры по ресторану, категории, доступности, цене, ключевому слову.</li>
+              <li>Нажмите «Применить» для обновления списка.</li>
+            </ul>
+          </div>
+        </div>
+        <div class="col-md-6">
+          <div class="p-2 border rounded bg-light">
+            <strong>Отчёты</strong>
+            <ul class="mb-0">
+              <li>Готовые отчёты: заказы по ресторанам, топ-блюда, минимальные остатки, скоро истекающие, по статусам.</li>
+              <li>Выберите отчёт, при необходимости ресторан, нажмите «Запустить».</li>
+            </ul>
+          </div>
+        </div>
+        <div class="col-md-6">
+          <div class="p-2 border rounded bg-light">
+            <strong>Пользователи</strong>
+            <ul class="mb-0">
+              <li>Admin может создавать пользователей с любой ролью.</li>
+              <li>Саморегистрация доступна всем ролям, кроме admin.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <hr>
+      <form class="row g-2" method="post" action="{{ url_for('action_context_set') }}">
+        <div class="col-md-3">
+          <label class="form-label">Активная роль</label>
+          <select class="form-select" name="role">
+            {% for r in roles %}
+            <option value="{{ r }}" {% if r==role %}selected{% endif %}>{{ r }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Ресторан</label>
+          <select class="form-select" name="rest_id">
+            <option value="">Любой</option>
+            {% for r in restaurants %}
+            <option value="{{ r.id }}" {% if current_restaurant==r.id %}selected{% endif %}>{{ r.id }} - {{ r.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-2 d-flex align-items-end">
+          <button class="btn btn-primary w-100">Применить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+function addFieldRow(containerId) {
+  const container = document.getElementById(containerId);
+  const row = document.createElement('div');
+  row.className = 'row g-2 mb-2 kv-row';
+  row.innerHTML = `
+    <div class="col-md-3"><input class="form-control" name="key" placeholder="column"></div>
+    <div class="col-md-4"><input class="form-control" name="value" placeholder="value"></div>
+    <div class="col-md-2 d-flex align-items-center">
+      <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeRow(this)">x</button>
+    </div>`;
+  container.parentNode.insertBefore(row, container.nextSibling);
+}
+function removeRow(btn) {
+  const row = btn.closest('.row');
+  if (row) row.remove();
+}
+function buildJson(formId, hiddenName) {
+  const form = document.getElementById(formId);
+  const keys = Array.from(form.querySelectorAll('input[name="key"]'));
+  const vals = Array.from(form.querySelectorAll('input[name="value"]'));
+  const payload = {};
+  keys.forEach((k, idx) => {
+    const key = k.value.trim();
+    const val = vals[idx]?.value ?? '';
+    if (key) payload[key] = val;
+  });
+  form.querySelector(`input[name="${hiddenName}"]`).value = JSON.stringify(payload);
+  return true;
+}
+function buildJsonFromCols(formId, hiddenName) {
+  const form = document.getElementById(formId);
+  const inputs = form.querySelectorAll('input[name^="col_"]');
+  const payload = {};
+  inputs.forEach(inp => {
+    const key = inp.name.replace("col_","");
+    const val = inp.value;
+    if (val !== "") payload[key] = val;
+  });
+  form.querySelector(`input[name="${hiddenName}"]`).value = JSON.stringify(payload);
+  return true;
+}
+function collectSelectedStocks() {
+  const checked = Array.from(document.querySelectorAll('input[name="stock_pick"]:checked')).map(i => i.value);
+  document.getElementById('selected_ids').value = checked.join(',');
+  document.getElementById('req_selected_ids').value = checked.join(',');
+  // qty already bound via form attribute
+  return true;
+}
+// Активируем вкладку по якорю (#tab-*)
+document.addEventListener("DOMContentLoaded", () => {
+  const hash = window.location.hash;
+  const activateTab = (target) => {
+    const trigger = document.querySelector(`[data-bs-target="${target}"]`);
+    if (trigger) {
+      const tab = new bootstrap.Tab(trigger);
+      tab.show();
+    }
+  };
+  if (hash) {
+    activateTab(hash);
+  } else {
+    activateTab("#tab-home");
+  }
+  // Charts data
+  const summary = {{ summary|tojson }};
+  const statusCounts = {{ status_counts|tojson }};
+  // Orders sum by restaurant
+  const ctxSum = document.getElementById("chartOrdersSum");
+  if (ctxSum && summary.length) {
+    new Chart(ctxSum, {
+      type: "bar",
+      data: {
+        labels: summary.map(r => r.restaurant_name),
+        datasets: [{
+          label: "Сумма заказов",
+          data: summary.map(r => r.orders_sum),
+          backgroundColor: "#2AABEE"
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: { y: { beginAtZero: true } }
+      }
+    });
+  }
+  // Orders by status
+  const ctxStatus = document.getElementById("chartStatus");
+  if (ctxStatus && statusCounts.length) {
+    new Chart(ctxStatus, {
+      type: "doughnut",
+      data: {
+        labels: statusCounts.map(s => s.status),
+        datasets: [{
+          data: statusCounts.map(s => s.cnt),
+          backgroundColor: ["#2AABEE","#74c0fc","#ffd43b","#fa5252","#51cf66","#9775fa","#ff922b"]
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { position: "bottom" } }
+      }
+    });
+  }
+});
+</script>
+{% endblock %}
+
