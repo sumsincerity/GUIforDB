@@ -109,7 +109,7 @@
             </tr>
           </thead>
           <tbody>
-          {% for r in summary %}
+            {% for r in summary %}
             <tr>
               <td>{{ r.restaurant_name }}</td>
               <td>{{ r.orders_count }}</td>
@@ -117,7 +117,7 @@
               <td>{{ r.stocks_count }}</td>
               <td>{{ r.stocks_qty }}</td>
             </tr>
-          {% endfor %}
+            {% endfor %}
           </tbody>
         </table>
       </div>
@@ -148,7 +148,6 @@
     </div>
   </div>
 
-
   {% if "query" in perms %}
   <div class="tab-pane fade" id="tab-query">
     <div class="card p-3">
@@ -167,9 +166,9 @@
         <table class="table table-sm table-striped">
           <thead><tr>{% for c in session.query_last.cols %}<th>{{ c }}</th>{% endfor %}</tr></thead>
           <tbody>
-          {% for row in session.query_last.rows %}
+            {% for row in session.query_last.rows %}
             <tr>{% for c in session.query_last.cols %}<td>{{ row[c] }}</td>{% endfor %}</tr>
-          {% endfor %}
+            {% endfor %}
           </tbody>
         </table>
       </div>
@@ -220,15 +219,13 @@
         <table class="table table-sm table-striped">
           <thead><tr>{% for c in session.tables_last.cols %}<th>{{ c }}</th>{% endfor %}</tr></thead>
           <tbody>
-          {% for row in session.tables_last.rows %}
+            {% for row in session.tables_last.rows %}
             <tr>{% for c in session.tables_last.cols %}<td>{{ row[c] }}</td>{% endfor %}</tr>
-          {% endfor %}
+            {% endfor %}
           </tbody>
         </table>
       </div>
     </div>
-    {% endif %}
-    {% if "admin" in perms %}
     {% endif %}
   </div>
   {% endif %}
@@ -283,7 +280,7 @@
             </tr>
           </thead>
           <tbody>
-          {% if stocks_last %}
+            {% if stocks_last %}
             {% for row in stocks_last %}
             <tr data-stock="{{ row.id }}" data-rest="{{ row.restaurant_id }}" data-ing="{{ row.ingredient_id }}" data-min="{{ row.min_threshold }}">
               <td><input type="checkbox" name="stock_pick" value="{{ row.id }}"></td>
@@ -298,9 +295,9 @@
               <td>{{ row.batch_no }}</td>
             </tr>
             {% endfor %}
-          {% else %}
+            {% else %}
             <tr><td colspan="10" class="text-muted">Нет данных. Нажмите «Обновить».</td></tr>
-          {% endif %}
+            {% endif %}
           </tbody>
         </table>
       </div>
@@ -341,11 +338,11 @@
         <table class="table table-sm table-striped">
           <thead><tr><th>ID</th><th>Ресторан</th><th>Стол</th><th>Гость</th><th>Статус</th><th>Создан</th><th>Сумма</th></tr></thead>
           <tbody>
-          {% for o in orders_last %}
+            {% for o in orders_last %}
             <tr>
               <td>{{ o.id }}</td><td>{{ o.restaurant_id }}</td><td>{{ o.table_number }}</td><td>{{ o.guest_name }}</td><td>{{ o.status }}</td><td>{{ o.created_at }}</td><td>{{ o.total_amount }}</td>
             </tr>
-          {% endfor %}
+            {% endfor %}
           </tbody>
         </table>
       </div>
@@ -425,12 +422,17 @@
         <table class="table table-sm table-striped">
           <thead><tr><th>ID</th><th>Ресторан</th><th>Блюдо</th><th>Категория</th><th>Цена</th><th>Время</th><th>Доступно</th></tr></thead>
           <tbody>
-          {% for r in session.menu_last %}
+            {% for r in session.menu_last %}
             <tr>
-              <td>{{ r.id }}</td><td>{{ r.restaurant_id }}</td><td>{{ r.name }}</td>
-              <td>{{ r.category }}</td><td>{{ r.price }}</td><td>{{ r.prep_time_minutes }}</td><td>{{ r.is_available }}</td>
+              <td>{{ r.id }}</td>
+              <td>{{ r.restaurant_id }}</td>
+              <td>{{ r.name }}</td>
+              <td>{{ r.category }}</td>
+              <td>{{ r.price }}</td>
+              <td>{{ r.prep_time_minutes or "—" }}</td>
+              <td {% if not r.is_available %}class="text-danger fw-bold"{% endif %}>{{ r.is_available }}</td>
             </tr>
-          {% endfor %}
+            {% endfor %}
           </tbody>
         </table>
       </div>
@@ -471,9 +473,9 @@
         <table class="table table-sm table-striped">
           <thead><tr>{% for c in session.report_last.cols %}<th>{{ c }}</th>{% endfor %}</tr></thead>
           <tbody>
-          {% for row in session.report_last.rows %}
+            {% for row in session.report_last.rows %}
             <tr>{% for c in session.report_last.cols %}<td>{{ row[c] }}</td>{% endfor %}</tr>
-          {% endfor %}
+            {% endfor %}
           </tbody>
         </table>
       </div>
@@ -525,35 +527,6 @@
           <button class="btn btn-primary">Register user</button>
         </div>
       </form>
-    </div>
-  </div>
-  {% endif %}
-
-  {% if "query" in perms %}
-  <div class="tab-pane fade" id="tab-query">
-    <div class="card p-3">
-      <div class="card-header-line">
-        <h6 class="mb-0">SQL</h6>
-        <span class="badge bg-secondary ms-2">Query</span>
-      </div>
-      <form method="post" action="{{ url_for('action_query_run') }}">
-        <div class="mb-3">
-          <textarea class="form-control" name="sql" rows="5" placeholder="SELECT * FROM restaurants LIMIT 20;"></textarea>
-        </div>
-        <button class="btn btn-primary">Выполнить</button>
-      </form>
-      {% if session.query_last %}
-      <div class="table-responsive mt-3">
-        <table class="table table-sm table-striped">
-          <thead><tr>{% for c in session.query_last.cols %}<th>{{ c }}</th>{% endfor %}</tr></thead>
-          <tbody>
-          {% for row in session.query_last.rows %}
-            <tr>{% for c in session.query_last.cols %}<td>{{ row[c] }}</td>{% endfor %}</tr>
-          {% endfor %}
-          </tbody>
-        </table>
-      </div>
-      {% endif %}
     </div>
   </div>
   {% endif %}
@@ -707,10 +680,8 @@ function collectSelectedStocks() {
   const checked = Array.from(document.querySelectorAll('input[name="stock_pick"]:checked')).map(i => i.value);
   document.getElementById('selected_ids').value = checked.join(',');
   document.getElementById('req_selected_ids').value = checked.join(',');
-  // qty already bound via form attribute
   return true;
 }
-// Активируем вкладку по якорю (#tab-*)
 document.addEventListener("DOMContentLoaded", () => {
   const hash = window.location.hash;
   const activateTab = (target) => {
@@ -725,10 +696,8 @@ document.addEventListener("DOMContentLoaded", () => {
   } else {
     activateTab("#tab-home");
   }
-  // Charts data
   const summary = {{ summary|tojson }};
   const statusCounts = {{ status_counts|tojson }};
-  // Orders sum by restaurant
   const ctxSum = document.getElementById("chartOrdersSum");
   if (ctxSum && summary.length) {
     new Chart(ctxSum, {
@@ -748,7 +717,6 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
   }
-  // Orders by status
   const ctxStatus = document.getElementById("chartStatus");
   if (ctxStatus && statusCounts.length) {
     new Chart(ctxStatus, {
@@ -769,4 +737,3 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 </script>
 {% endblock %}
-

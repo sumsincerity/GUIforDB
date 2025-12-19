@@ -14,7 +14,7 @@ ROLE_PERMISSIONS = {
     "admin": {"admin", "tables", "query", "inventory", "orders", "menu", "reports"},
     "analyst": {"tables", "query", "menu", "reports"},
     "manager": {"tables", "inventory", "orders", "menu", "reports"},
-    "chef": {"inventory", "orders", "menu"},
+    "cook": {"inventory", "orders", "menu"},
     "waiter": {"orders", "menu"},
 }
 
@@ -83,7 +83,7 @@ def get_counts() -> dict:
         with get_db_conn() as conn, conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) FROM orders")
             counts["orders"] = cur.fetchone()[0]
-            cur.execute("SELECT COUNT(*) FROM stocks")
+            cur.execute("SELECT COUNT(*) FROM ingredient_batches")
             counts["stocks"] = cur.fetchone()[0]
             cur.execute("SELECT COUNT(*) FROM dishes")
             counts["dishes"] = cur.fetchone()[0]
@@ -93,11 +93,6 @@ def get_counts() -> dict:
 
 
 def get_summary(role: str | None, rest_id: int | None) -> list[dict]:
-    """
-    Return summary for dashboard.
-    admin -> по всем ресторанам, группировка.
-    иначе -> по текущему ресторану (или всем, если rest_id не задан).
-    """
     base_sql = """
         SELECT
           r.id AS restaurant_id,
@@ -108,7 +103,7 @@ def get_summary(role: str | None, rest_id: int | None) -> list[dict]:
           COALESCE(SUM(s.qty), 0) AS stocks_qty
         FROM restaurants r
         LEFT JOIN orders o ON o.restaurant_id = r.id
-        LEFT JOIN stocks s ON s.restaurant_id = r.id
+        LEFT JOIN ingredient_batches s ON s.restaurant_id = r.id
     """
     clauses = []
     params: list = []
@@ -132,15 +127,15 @@ def get_status_counts(role: str | None, rest_id: int | None) -> list[dict]:
     clauses = []
     params: list = []
     if role != "admin" and rest_id:
-        clauses.append("restaurant_id = %s")
+        clauses.append("o.restaurant_id = %s")
         params.append(rest_id)
     where_sql = "WHERE " + " AND ".join(clauses) if clauses else ""
     sql = f"""
-        SELECT status, COUNT(*) AS cnt
-        FROM orders
+        SELECT o.status, COUNT(*) AS cnt
+        FROM orders o
         {where_sql}
-        GROUP BY status
-        ORDER BY status
+        GROUP BY o.status
+        ORDER BY o.status
     """
     with get_db_conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(sql, params)
@@ -157,7 +152,7 @@ def list_stocks(restaurant_id: int | None = None) -> list[dict]:
     sql = f"""
         SELECT s.id, s.restaurant_id, s.ingredient_id, i.name AS ingredient_name,
                s.qty, s.unit, s.expiry_date, s.min_threshold, s.batch_no
-        FROM stocks s
+        FROM ingredient_batches s
         JOIN ingredients i ON i.id = s.ingredient_id
         {where_sql}
         ORDER BY s.restaurant_id, i.name;
@@ -178,11 +173,19 @@ def list_orders(restaurant_id: int | None, status: str | None) -> list[dict]:
         params.append(status)
     where_sql = "WHERE " + " AND ".join(clauses) if clauses else ""
     sql = f"""
-        SELECT o.id, o.restaurant_id, o.table_number, o.guest_name, o.status,
-               o.created_at, o.scheduled_for, o.total_amount
+        SELECT
+            o.id,
+            o.restaurant_id,
+            t.table_number,
+            o.guest_name,
+            o.status,
+            o.order_time AS created_at,
+            o.scheduled_for,
+            o.total_amount
         FROM orders o
+        LEFT JOIN restaurant_tables t ON t.id = o.table_id
         {where_sql}
-        ORDER BY o.created_at DESC
+        ORDER BY o.order_time DESC
         LIMIT 300;
     """
     with get_db_conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -252,7 +255,7 @@ def current_user():
             "admin": "Администратор",
             "manager": "Менеджер",
             "waiter": "Официант",
-            "chef": "Шеф",
+            "cook": "Шеф",
             "analyst": "Аналитик",
         }
         user["role_display"] = mapping.get(user.get("role"), user.get("role"))
@@ -296,7 +299,7 @@ def login():
             return render_template("login.html")
         try:
             with get_db_conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute("SELECT id, username, password_hash FROM users WHERE username=%s", (username,))
+                cur.execute("SELECT id, username, password_hash FROM app_users WHERE username=%s", (username,))
                 user = cur.fetchone()
                 if not user:
                     flash("Пользователь не найден", "danger")
@@ -308,7 +311,7 @@ def login():
                 cur.execute(
                     """
                     SELECT ar.name, ur.restaurant_id
-                    FROM user_roles ur
+                    FROM app_user_roles ur
                     JOIN app_roles ar ON ar.id = ur.role_id
                     WHERE ur.user_id = %s
                     ORDER BY ar.name
@@ -321,7 +324,6 @@ def login():
                     return render_template("login.html")
                 role = roles[0]["name"]
                 rest_id = roles[0]["restaurant_id"]
-                # set session vars
                 session["user"] = {
                     "id": user["id"],
                     "username": user["username"],
@@ -363,13 +365,13 @@ def signup_waiter():
             pwd_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
             with get_db_conn() as conn, conn.cursor() as cur:
                 cur.execute(
-                    "INSERT INTO users(username, password_hash) VALUES (%s, %s) RETURNING id",
+                    "INSERT INTO app_users(username, password_hash) VALUES (%s, %s) RETURNING id",
                     (username, pwd_hash),
                 )
                 user_id = cur.fetchone()[0]
                 cur.execute(
                     """
-                    INSERT INTO user_roles(user_id, role_id, restaurant_id)
+                    INSERT INTO app_user_roles(user_id, role_id, restaurant_id)
                     VALUES (%s, (SELECT id FROM app_roles WHERE name=%s), %s)
                     ON CONFLICT DO NOTHING
                     """,
@@ -413,7 +415,6 @@ def dashboard():
         "summary": [],
         "status_counts": [],
     }
-    # preload some reference data
     try:
         with get_db_conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SELECT id, name FROM restaurants ORDER BY id")
@@ -421,12 +422,10 @@ def dashboard():
             cur.execute("SELECT name FROM app_roles ORDER BY name")
             data["roles"] = [r["name"] for r in cur.fetchall()]
             data["tables"] = list_tables()
-            # if form table set, refresh column info
             form = data["tables_form"]
             if form and form.get("table"):
                 form["columns"] = list_columns(form["table"])
                 session["tables_form"] = form
-            # preload defaults if empty
             default_rest = data["restaurants"][0]["id"] if data["restaurants"] else None
             if not data["stocks_last"] and default_rest:
                 data["stocks_last"] = list_stocks(default_rest)
@@ -472,7 +471,6 @@ def action_tables_view():
         flash("Нет доступа к таблицам", "warning")
         return redirect(url_for("dashboard") + "#tab-tables")
     table = (request.form.get("table", "") or "").strip()
-    # clear any previous form if table changed
     if table:
         form = session.get("tables_form")
         if form and form.get("table") != table:
@@ -500,16 +498,15 @@ def action_tables_insert():
     payload = request.form.get("json_body", "") or ""
     try:
         import json
-
         if not payload.strip():
             raise ValueError("Нет данных для вставки")
         data = json.loads(payload)
         if not isinstance(data, dict):
-            raise ValueError("Должен быть JSON-объект с колонками (формируется из формы)")
+            raise ValueError("Должен быть JSON-объект")
         cols = list(data.keys())
         vals = list(data.values())
         placeholders = ", ".join(["%s"] * len(cols))
-        col_list = ", ".join(cols)
+        col_list = ", ". join(cols)
         sql = f"INSERT INTO public.{table} ({col_list}) VALUES ({placeholders})"
         with get_db_conn() as conn, conn.cursor() as cur:
             cur.execute(sql, vals)
@@ -560,13 +557,13 @@ def action_users_create():
         pwd_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
         with get_db_conn() as conn, conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO users(username, password_hash) VALUES (%s, %s) RETURNING id",
+                "INSERT INTO app_users(username, password_hash) VALUES (%s, %s) RETURNING id",
                 (username, pwd_hash),
             )
             user_id = cur.fetchone()[0]
             cur.execute(
                 """
-                INSERT INTO user_roles(user_id, role_id, restaurant_id)
+                INSERT INTO app_user_roles(user_id, role_id, restaurant_id)
                 VALUES (%s, (SELECT id FROM app_roles WHERE name=%s), %s)
                 ON CONFLICT DO NOTHING
                 """,
@@ -610,16 +607,13 @@ def action_context_set():
     role = request.form.get("role") or None
     rest = request.form.get("rest_id") or None
     try:
-        user = session["user"]  
+        user = session["user"]
         user["role"] = role
         user["restaurant_id"] = int(rest) if rest else None
         session["user"] = user
         with get_db_conn() as conn, conn.cursor() as cur:
             cur.execute("SELECT set_config('app.current_role', %s, true);", (role or "",))
-            if rest:
-                cur.execute("SELECT set_config('app.current_restaurant_id', %s, true);", (str(rest),))
-            else:
-                cur.execute("SELECT set_config('app.current_restaurant_id', NULL, true);")
+            cur.execute("SELECT set_config('app.current_restaurant_id', %s, true);", (str(rest) if rest else "",))
         flash("Контекст обновлен", "success")
     except Exception as ex:
         flash(f"Ошибка контекста: {ex}", "danger")
@@ -654,7 +648,7 @@ def action_inventory_update():
             return redirect(url_for("dashboard") + "#tab-inv")
         with get_db_conn() as conn, conn.cursor() as cur:
             for sid in stock_ids:
-                cur.execute(f"UPDATE stocks SET {', '.join(sets)} WHERE id = %s", [*params, int(sid)])
+                cur.execute(f"UPDATE ingredient_batches SET {', '.join(sets)} WHERE id = %s", [*params, int(sid)])
         flash("Запасы обновлены", "success")
     except Exception as ex:
         flash(f"Ошибка обновления: {ex}", "danger")
@@ -694,7 +688,7 @@ def action_inventory_request():
             cur.execute(
                 """
                 SELECT id, restaurant_id, ingredient_id, min_threshold
-                FROM stocks
+                FROM ingredient_batches
                 WHERE id = ANY(%s)
                 """,
                 (list(map(int, stock_ids)),),
@@ -704,10 +698,10 @@ def action_inventory_request():
                 qty_to_use = qty_val if qty_val is not None else (row["min_threshold"] or 1)
                 cur.execute(
                     """
-                    INSERT INTO purchase_requests(restaurant_id, ingredient_id, qty_needed, created_by)
-                    VALUES (%s, %s, %s, %s)
+                    INSERT INTO purchase_requests(restaurant_id, ingredient_id, qty, status)
+                    VALUES (%s, %s, %s, 'new')
                     """,
-                    (row["restaurant_id"], row["ingredient_id"], qty_to_use, current_user()["id"]),
+                    (row["restaurant_id"], row["ingredient_id"], qty_to_use),
                 )
         flash("Заявки созданы", "success")
     except Exception as ex:
@@ -737,22 +731,36 @@ def action_orders_create():
     if not has_perm("orders"):
         flash("Нет доступа", "warning")
         return redirect(url_for("dashboard") + "#tab-orders")
+
     rest_id = int(request.form.get("rest_id"))
-    table = request.form.get("table") or None
+    table_number = request.form.get("table") or None
     guest = request.form.get("guest") or None
-    status = request.form.get("status") or "new"
+    status = request.form.get("status") or "created"
     waiter = request.form.get("waiter") or None
     sched = request.form.get("scheduled") or None
     total = request.form.get("total") or None
-    try:
+
+    table_id = None
+    if table_number:
         with get_db_conn() as conn, conn.cursor() as cur:
             cur.execute(
+                "SELECT id FROM restaurant_tables WHERE restaurant_id = %s AND table_number = %s",
+                (rest_id, table_number)
+            )
+            row = cur.fetchone()
+            if row:
+                table_id = row[0]
+
+    try:
+        with get_db_conn() as conn, conn.cursor() as cur:
+            user = current_user()
+            cur.execute(
                 """
-                INSERT INTO orders(restaurant_id, table_number, guest_name, status, waiter_id, scheduled_for, total_amount)
-                VALUES (%s, %s, %s, %s, %s, %s, COALESCE(%s,0))
-                RETURNING id
+                INSERT INTO orders(restaurant_id, table_id, guest_name, status, created_by_user, scheduled_for,
+                                   total_amount)
+                VALUES (%s, %s, %s, %s, %s, %s, COALESCE(%s, 0))
                 """,
-                (rest_id, table, guest, status, int(waiter) if waiter else None, sched, float(total) if total else None),
+                (rest_id, table_id, guest, status, user["id"], sched, float(total) if total else None),
             )
             order_id = cur.fetchone()[0]
         flash(f"Заказ создан: {order_id}", "success")
@@ -816,8 +824,8 @@ def action_menu_filter():
         clauses.append("price <= %s")
         params.append(float(price_max))
     if keyword:
-        clauses.append("searchable @@ plainto_tsquery('russian', %s)")
-        params.append(keyword)
+        clauses.append("LOWER(name) LIKE LOWER(%s)")
+        params.append(f"%{keyword}%")
     where_sql = "WHERE " + " AND ".join(clauses) if clauses else ""
     sql = f"""
         SELECT id, restaurant_id, name, category, price, prep_time_minutes, is_available
@@ -860,13 +868,13 @@ def action_reports_run():
         elif key == "low_stock":
             sql = """
                 SELECT s.restaurant_id, i.name, s.qty, s.min_threshold
-                FROM stocks s JOIN ingredients i ON i.id = s.ingredient_id
+                FROM ingredient_batches s JOIN ingredients i ON i.id = s.ingredient_id
                 WHERE s.qty <= s.min_threshold
             """
         elif key == "expiring":
             sql = """
                 SELECT s.restaurant_id, i.name, s.qty, s.expiry_date
-                FROM stocks s JOIN ingredients i ON i.id = s.ingredient_id
+                FROM ingredient_batches s JOIN ingredients i ON i.id = s.ingredient_id
                 WHERE s.expiry_date IS NOT NULL AND s.expiry_date <= now()::date + INTERVAL '7 days'
             """
         elif key == "orders_by_status":
@@ -874,10 +882,11 @@ def action_reports_run():
         else:
             flash("Неизвестный отчет", "warning")
             return redirect(url_for("dashboard") + "#tab-reports")
-        if rest and "WHERE" not in sql:
-            sql += " WHERE 1=1"
         if rest and "restaurant_id" in sql:
-            sql += " AND restaurant_id = %s" if "WHERE" in sql else " WHERE restaurant_id = %s"
+            if "WHERE" in sql:
+                sql += " AND restaurant_id = %s"
+            else:
+                sql += " WHERE restaurant_id = %s"
             params.append(int(rest))
         with get_db_conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(sql, params)
@@ -891,4 +900,3 @@ def action_reports_run():
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=8000)
-
