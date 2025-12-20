@@ -4,6 +4,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from flask import Flask, render_template, request, redirect, url_for, session, flash
 from dotenv import load_dotenv
+from datetime import datetime
 
 load_dotenv()
 
@@ -11,13 +12,28 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev_secret_change_me")
 
 ROLE_PERMISSIONS = {
-    "admin": {"admin", "tables", "query", "inventory", "orders", "menu", "reports"},
+    "admin": {"admin", "tables", "query", "inventory", "orders", "menu", "reports", "purchase"},
     "analyst": {"tables", "query", "menu", "reports"},
-    "manager": {"tables", "inventory", "orders", "menu", "reports"},
-    "cook": {"inventory", "orders", "menu"},
+    "manager": {"tables", "inventory", "orders", "menu", "reports", "purchase"},
+    "cook": {"inventory", "orders", "menu", "purchase"},
     "waiter": {"orders", "menu"},
 }
 
+
+def format_datetime_columns(rows):
+    """Форматирует все datetime-поля в строку без часового пояса."""
+    if not rows:
+        return rows
+    formatted = []
+    for row in rows:
+        new_row = {}
+        for key, value in row.items():
+            if isinstance(value, datetime):
+                new_row[key] = value.strftime('%Y-%m-%d %H:%M:%S')
+            else:
+                new_row[key] = value
+        formatted.append(new_row)
+    return formatted
 
 def get_db_conn():
     return psycopg2.connect(
@@ -161,25 +177,18 @@ def list_stocks(restaurant_id: int | None = None) -> list[dict]:
         cur.execute(sql, params)
         rows = cur.fetchall()
 
+    # Форматируем expiry_date в 'YYYY-MM-DD'
     result = []
     for row in rows:
-        # Форматируем дату в 'YYYY-MM-DD'
-        expiry_str = row["expiry_date"].strftime('%Y-%m-%d') if row["expiry_date"] else "—"
-
-        qty_clean = int(row["qty"]) if row["qty"] is not None and row["qty"] == int(row["qty"]) else row["qty"]
-        min_clean = int(row["min_threshold"]) if row["min_threshold"] is not None and row["min_threshold"] == int(row["min_threshold"]) else row["min_threshold"]
-
-        result.append({
-            "id": row["id"],
-            "restaurant_id": row["restaurant_id"],
-            "ingredient_id": row["ingredient_id"],
-            "ingredient_name": row["ingredient_name"],
-            "qty": qty_clean,
-            "unit": row["unit"],
-            "expiry_date": expiry_str,  # ← здесь уже строка!
-            "min_threshold": min_clean,
-            "batch_no": row["batch_no"],
-        })
+        new_row = {}
+        for key, value in row.items():
+            if key == 'expiry_date' and value is not None:
+                new_row[key] = value.strftime('%Y-%m-%d')
+            elif isinstance(value, datetime):
+                new_row[key] = value.strftime('%Y-%m-%d %H:%M:%S')
+            else:
+                new_row[key] = value
+        result.append(new_row)
     return result
 
 
@@ -211,7 +220,8 @@ def list_orders(restaurant_id: int | None, status: str | None) -> list[dict]:
     """
     with get_db_conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(sql, params)
-        return cur.fetchall()
+        rows = cur.fetchall()
+        return format_datetime_columns(rows)
 
 
 def list_dishes_filtered(
@@ -301,7 +311,6 @@ def has_perm(module: str) -> bool:
         return False
     role = user.get("role")
     return module in ROLE_PERMISSIONS.get(role, set())
-
 
 @app.route("/", methods=["GET"])
 def index():
@@ -463,6 +472,7 @@ def dashboard():
                 session["report_last"] = data["report_last"]
             data["summary"] = get_summary(user["role"], data["current_restaurant"])
             data["status_counts"] = get_status_counts(user["role"], data["current_restaurant"])
+            data["purchase_requests"] = list_purchase_requests(data["current_restaurant"])
     except Exception as ex:
         flash(f"Ошибка загрузки справочников: {ex}", "danger")
         data["restaurants"] = []
@@ -482,7 +492,7 @@ def fetch_table(table: str, where: str | None, limit: int):
         cur.execute(sql, params)
         rows = cur.fetchall()
         cols = list(rows[0].keys()) if rows else []
-        return cols, rows
+        return cols, format_datetime_columns(rows)
 
 
 @app.post("/action/tables/view")
@@ -705,23 +715,15 @@ def action_inventory_request():
         return redirect(url_for("dashboard") + "#tab-inv")
     try:
         qty_val = float(qty) if qty else None
-        with get_db_conn() as conn, conn.cursor() as cur:
+        with get_db_conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
-                """
-                SELECT id, restaurant_id, ingredient_id, min_threshold
-                FROM ingredient_batches
-                WHERE id = ANY(%s)
-                """,
-                (list(map(int, stock_ids)),),
-            )
+                "SELECT id, restaurant_id, ingredient_id, min_threshold FROM ingredient_batches WHERE id = ANY(%s)",
+                (list(map(int, stock_ids)),))
             rows = cur.fetchall()
             for row in rows:
                 qty_to_use = qty_val if qty_val is not None else (row["min_threshold"] or 1)
                 cur.execute(
-                    """
-                    INSERT INTO purchase_requests(restaurant_id, ingredient_id, qty, status)
-                    VALUES (%s, %s, %s, 'new')
-                    """,
+                    "INSERT INTO purchase_requests(restaurant_id, ingredient_id, qty, status) VALUES (%s, %s, %s, 'new')",
                     (row["restaurant_id"], row["ingredient_id"], qty_to_use),
                 )
         flash("Заявки созданы", "success")
@@ -729,6 +731,24 @@ def action_inventory_request():
         flash(f"Ошибка заявки: {ex}", "danger")
     return redirect(url_for("dashboard") + "#tab-inv")
 
+def list_purchase_requests(restaurant_id: int | None = None) -> list[dict]:
+    clauses = []
+    params = []
+    if restaurant_id:
+        clauses.append("pr.restaurant_id = %s")
+        params.append(restaurant_id)
+    where_sql = "WHERE " + " AND ".join(clauses) if clauses else ""
+    sql = f"""
+        SELECT pr.id, pr.restaurant_id, i.name AS ingredient_name, pr.qty, pr.status, pr.created_at
+        FROM purchase_requests pr
+        JOIN ingredients i ON i.id = pr.ingredient_id
+        {where_sql}
+        ORDER BY pr.created_at DESC;
+    """
+    with get_db_conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(sql, params)
+        rows = cur.fetchall()
+        return format_datetime_columns(rows)
 
 @app.post("/action/orders/load")
 @login_required
@@ -777,9 +797,9 @@ def action_orders_create():
             user = current_user()
             cur.execute(
                 """
-                INSERT INTO orders(restaurant_id, table_id, guest_name, status, created_by_user, scheduled_for,
-                                   total_amount)
-                VALUES (%s, %s, %s, %s, %s, %s, COALESCE(%s, 0))
+                INSERT INTO orders(restaurant_id, table_id, guest_name, status, created_by_user,
+                                   scheduled_for, total_amount)
+                VALUES (%s, %s, %s, %s, %s, %s, COALESCE(%s, 0)) RETURNING id
                 """,
                 (rest_id, table_id, guest, status, user["id"], sched, float(total) if total else None),
             )

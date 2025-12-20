@@ -24,6 +24,11 @@
     <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-inv" type="button">Запасы</button>
   </li>
   {% endif %}
+  {% if "purchase" in perms %}
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-purchase" type="button">Заявки</button>
+  </li>
+  {% endif %}
   {% if "orders" in perms %}
   <li class="nav-item" role="presentation">
     <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-orders" type="button">Заказы</button>
@@ -304,6 +309,48 @@
   </div>
   {% endif %}
 
+  <!-- ВКЛАДКА ЗАЯВКИ -->
+  {% if "purchase" in perms %}
+  <div class="tab-pane fade" id="tab-purchase">
+    <div class="card p-3">
+      <div class="card-header-line">
+        <h6 class="mb-0">Заявки на закупку</h6>
+        <span class="badge bg-secondary ms-2">Purchase Requests</span>
+      </div>
+      {% if purchase_requests %}
+      <div class="table-responsive mt-3">
+        <table class="table table-sm table-striped">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Ресторан</th>
+              <th>Ингредиент</th>
+              <th>Количество</th>
+              <th>Статус</th>
+              <th>Дата создания</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for pr in purchase_requests %}
+            <tr>
+              <td>{{ pr.id }}</td>
+              <td>{{ pr.restaurant_id }}</td>
+              <td>{{ pr.ingredient_name }}</td>
+              <td>{{ pr.qty }}</td>
+              <td>{{ pr.status }}</td>
+              <td>{{ pr.created_at if pr.created_at else "—" }}</td></td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="alert alert-info mt-3">Нет заявок.</div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
   {% if "orders" in perms %}
   <div class="tab-pane fade" id="tab-orders">
     <div class="card p-3 mb-3">
@@ -555,7 +602,7 @@
               <li>admin: всё, включая управление пользователями.</li>
               <li>manager: запасы, заказы, меню, отчёты, таблицы.</li>
               <li>waiter: заказы, меню.</li>
-              <li>chef: запасы, заказы, меню.</li>
+              <li>cook: запасы, заказы, меню.</li>
               <li>analyst: таблицы, SQL, меню, отчёты.</li>
             </ul>
           </div>
@@ -635,7 +682,7 @@
 
 <script>
 function addFieldRow(containerId) {
-  const container = document.getElementById(containerId);
+  const container = document.getElementById(containerID);
   const row = document.createElement('div');
   row.className = 'row g-2 mb-2 kv-row';
   row.innerHTML = `
