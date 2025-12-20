@@ -159,7 +159,28 @@ def list_stocks(restaurant_id: int | None = None) -> list[dict]:
     """
     with get_db_conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(sql, params)
-        return cur.fetchall()
+        rows = cur.fetchall()
+
+    result = []
+    for row in rows:
+        # Форматируем дату в 'YYYY-MM-DD'
+        expiry_str = row["expiry_date"].strftime('%Y-%m-%d') if row["expiry_date"] else "—"
+
+        qty_clean = int(row["qty"]) if row["qty"] is not None and row["qty"] == int(row["qty"]) else row["qty"]
+        min_clean = int(row["min_threshold"]) if row["min_threshold"] is not None and row["min_threshold"] == int(row["min_threshold"]) else row["min_threshold"]
+
+        result.append({
+            "id": row["id"],
+            "restaurant_id": row["restaurant_id"],
+            "ingredient_id": row["ingredient_id"],
+            "ingredient_name": row["ingredient_name"],
+            "qty": qty_clean,
+            "unit": row["unit"],
+            "expiry_date": expiry_str,  # ← здесь уже строка!
+            "min_threshold": min_clean,
+            "batch_no": row["batch_no"],
+        })
+    return result
 
 
 def list_orders(restaurant_id: int | None, status: str | None) -> list[dict]:

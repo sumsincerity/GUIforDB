@@ -846,18 +846,18 @@ WHERE u.username = 'waiter2';
 -- =========================
 -- БЛЮДА
 -- =========================
-INSERT INTO dishes (restaurant_id, name, category, price) VALUES
-(1, 'Паста Карбонара', 'Паста', 550),
-(1, 'Цезарь с курицей', 'Салаты', 480),
-(1, 'Тирамису', 'Десерты', 350),
-(1, 'Борщ', 'Супы', 280),
-(2, 'Пицца Маргарита', 'Пицца', 600),
-(2, 'Пицца Пепперони', 'Пицца', 680),
-(2, 'Цезарь с курицей', 'Салаты', 500),
-(2, 'Капрезе', 'Салаты', 390),
-(3, 'Суп Том Ям', 'Супы', 520),
-(3, 'Рис с овощами', 'Гарниры', 310),
-(1, 'Фуа-гра', 'Деликатесы', 1200);
+INSERT INTO dishes (restaurant_id, name, category, price, prep_time_minutes) VALUES
+(1, 'Паста Карбонара', 'Паста', 550, 20),
+(1, 'Цезарь с курицей', 'Салаты', 480, 15),
+(1, 'Тирамису', 'Десерты', 350, 10),
+(1, 'Борщ', 'Супы', 280, 25),
+(2, 'Пицца Маргарита', 'Пицца', 600, 30),
+(2, 'Пицца Пепперони', 'Пицца', 680, 30),
+(2, 'Цезарь с курицей', 'Салаты', 500, 15),
+(2, 'Капрезе', 'Салаты', 390, 15),
+(3, 'Суп Том Ям', 'Супы', 520, 25),
+(3, 'Рис с овощами', 'Гарниры', 310, 25),
+(1, 'Фуа-гра', 'Деликатесы', 1200, 10);
 
 -- =========================
 -- ИНГРЕДИЕНТЫ
@@ -897,26 +897,26 @@ WHERE name = 'Фуа-гра';
 -- =========================
 -- ПАРТИИ ИНГРЕДИЕНТОВ (FIFO)
 -- =========================
-INSERT INTO ingredient_batches (ingredient_id, restaurant_id, qty, expiry_date) VALUES
-(1, 1, 5000, now() + interval '15 days'),  -- Спагетти
-(2, 1, 1000, now() + interval '10 days'),  -- Бекон
-(3, 1, 200,  now() + interval '14 days'),  -- Яйцо
-(4, 1, 1500, now() + interval '30 days'),  -- Пармезан
-(5, 1, 3000, now() + interval '6 days'),   -- Курица
-(6, 1, 2000, now() + interval '10 days');  -- Салат
+INSERT INTO ingredient_batches (ingredient_id, restaurant_id, batch_no, min_threshold,  qty, expiry_date) VALUES
+(1, 1, 'BATCH-001', 5, 5000, now() + interval '15 days'),  -- Спагетти
+(2, 1, 'BATCH-002', 5, 1000, now() + interval '10 days'),  -- Бекон
+(3, 1, 'BATCH-003', 5, 200,  now() + interval '14 days'),  -- Яйцо
+(4, 1, 'BATCH-004', 5, 1500, now() + interval '30 days'),  -- Пармезан
+(5, 1, 'BATCH-005', 5, 3000, now() + interval '6 days'),   -- Курица
+(6, 1, 'BATCH-006', 5, 2000, now() + interval '10 days');  -- Салат
 
 -- Для Pasta House (id=2) — делаем пиццу, поэтому нужны мука и т.д.
-INSERT INTO ingredient_batches (ingredient_id, restaurant_id, qty, expiry_date) VALUES
-(7, 2, 5000, now() + interval '20 days'),  -- Мука
-(8, 2, 2000, now() + interval '10 days'),  -- Томаты
-(9, 2, 1500, now() + interval '15 days'),  -- Моцарелла
-(10,2, 1000, now() + interval '12 days');  -- Пепперони
+INSERT INTO ingredient_batches (ingredient_id, restaurant_id, batch_no, min_threshold, qty, expiry_date) VALUES
+(7, 2, 'PIZZA-001', 5, 5000, now() + interval '20 days'),
+(8, 2, 'TOMATO-001', 5, 2000, now() + interval '10 days'),
+(9, 2, 'MOZARELA-001', 5, 1500, now() + interval '15 days'),
+(10,2, 'PEPP-001', 5, 1000, now() + interval '12 days');
 
 -- Для Volga Food (id=3) — сделаем базовые ингредиенты
-INSERT INTO ingredient_batches (ingredient_id, restaurant_id, qty, expiry_date) VALUES
-(5, 3, 1000, now() + interval '7 days'),   -- Курица
-(11, 3, 1000, now() + interval '10 days'),
-(1, 3, 2000, now() + interval '10 days');  -- Рис (условно — используем Спагетти как заглушку)
+INSERT INTO ingredient_batches (ingredient_id, restaurant_id, batch_no, min_threshold,  qty, expiry_date) VALUES
+(5, 3, 'CHICKEN-001', 5, 1000, now() + interval '7 days'),
+(1, 3, 'RICE-001', 5, 2000, now() + interval '10 days'),
+(11,3, 'VEG-001', 5, 800, now() + interval '10 days');
 
 -- =========================
 -- ЗАКАЗЫ и столы
