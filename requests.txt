@@ -193,3 +193,8 @@ JOIN popular_dishes pd ON d.id = pd.id
 WHERE o.status IN ('completed', 'served')
 GROUP BY i.name
 ORDER BY total_used_in_popular DESC;
+
+
+Cluster 0 — популярные дешёвые
+Cluster 1 — редкие дорогие
+Cluster 2 — ключевые блюда меню

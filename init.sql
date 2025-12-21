@@ -312,7 +312,7 @@ BEGIN
 END;
 $$;
 
--- Списывает ингредиенты при финализации заказа
+-- Списывает ингредиенты при финализации заказа (использует min_threshold из партий)
 CREATE OR REPLACE FUNCTION fn_decrease_stock_for_order(p_order_id INT)
 RETURNS VOID LANGUAGE plpgsql AS $$
 DECLARE
@@ -322,8 +322,12 @@ DECLARE
     v_batch RECORD;
     v_left NUMERIC;
     v_total_left NUMERIC;
-    v_threshold NUMERIC := 5; -- порог для генерации заявки (можно хранить в settings)
+    v_min_threshold NUMERIC;
+    v_restaurant_id INT;
 BEGIN
+    -- Получаем restaurant_id один раз
+    SELECT restaurant_id INTO v_restaurant_id FROM orders WHERE id = p_order_id;
+
     -- Для всех позиций заказа
     FOR rec_item IN SELECT * FROM order_items WHERE order_id = p_order_id
     LOOP
@@ -340,7 +344,7 @@ BEGIN
 
                 SELECT * INTO v_batch FROM ingredient_batches
                 WHERE ingredient_id = rec_recipe.ingredient_id
-                  AND restaurant_id = (SELECT restaurant_id FROM orders WHERE id = p_order_id)
+                  AND restaurant_id = v_restaurant_id
                   AND active = TRUE
                   AND qty > 0
                 ORDER BY COALESCE(expiry_date, 'infinity') ASC
@@ -348,44 +352,54 @@ BEGIN
                 LIMIT 1;
 
                 IF NOT FOUND THEN
-                    -- не хватает продукта — откат всей транзакции
-                    RAISE EXCEPTION 'Not enough ingredient % for restaurant % needed %', rec_recipe.ingredient_id,
-                        (SELECT restaurant_id FROM orders WHERE id = p_order_id), v_needed;
+                    RAISE EXCEPTION 'Not enough ingredient % for restaurant % needed %',
+                        rec_recipe.ingredient_id, v_restaurant_id, v_needed;
                 END IF;
 
                 IF v_batch.qty >= v_needed THEN
-                    -- списываем всё необходимое из этой партии
                     UPDATE ingredient_batches SET qty = qty - v_needed WHERE id = v_batch.id;
                     INSERT INTO inventory_movements (batch_id, ingredient_id, restaurant_id, change_qty, reason, related_order_id)
-                    VALUES (v_batch.id, rec_recipe.ingredient_id, (SELECT restaurant_id FROM orders WHERE id = p_order_id), -v_needed, 'order', p_order_id);
+                    VALUES (v_batch.id, rec_recipe.ingredient_id, v_restaurant_id, -v_needed, 'order', p_order_id);
                     v_needed := 0;
                 ELSE
-                    -- списываем всю партию и продолжаем
                     v_left := v_batch.qty;
                     UPDATE ingredient_batches SET qty = 0, active = FALSE WHERE id = v_batch.id;
                     INSERT INTO inventory_movements (batch_id, ingredient_id, restaurant_id, change_qty, reason, related_order_id)
-                    VALUES (v_batch.id, rec_recipe.ingredient_id, (SELECT restaurant_id FROM orders WHERE id = p_order_id), -v_left, 'order', p_order_id);
+                    VALUES (v_batch.id, rec_recipe.ingredient_id, v_restaurant_id, -v_left, 'order', p_order_id);
                     v_needed := v_needed - v_left;
                 END IF;
             END LOOP;
 
-            -- после списания проверяем общий остаток по ингредиенту на данной точке
-            v_total_left := fn_total_ingredient_qty(rec_recipe.ingredient_id, (SELECT restaurant_id FROM orders WHERE id = p_order_id));
-            IF v_total_left <= v_threshold THEN
-                -- создаём заявку, если ещё не создана активная заявка для этого ингредиента
+            -- Получаем минимальный порог для этого ингредиента в ресторане
+            SELECT COALESCE(MIN(min_threshold), 5) INTO v_min_threshold
+            FROM ingredient_batches
+            WHERE ingredient_id = rec_recipe.ingredient_id
+              AND restaurant_id = v_restaurant_id;
+
+            -- Проверяем общий остаток по ингредиенту
+            SELECT COALESCE(SUM(qty), 0) INTO v_total_left
+            FROM ingredient_batches
+            WHERE ingredient_id = rec_recipe.ingredient_id
+              AND restaurant_id = v_restaurant_id
+              AND active = TRUE;
+
+            -- Если остаток <= порога — создаём заявку
+            IF v_total_left <= v_min_threshold THEN
                 IF NOT EXISTS (
-                    SELECT 1 FROM purchase_requests WHERE restaurant_id = (SELECT restaurant_id FROM orders WHERE id = p_order_id)
-                        AND ingredient_id = rec_recipe.ingredient_id AND status IN ('new','ordered')
+                    SELECT 1 FROM purchase_requests
+                    WHERE restaurant_id = v_restaurant_id
+                      AND ingredient_id = rec_recipe.ingredient_id
+                      AND status IN ('new','ordered')
                 ) THEN
                     INSERT INTO purchase_requests (restaurant_id, ingredient_id, qty, status)
-                    VALUES ((SELECT restaurant_id FROM orders WHERE id = p_order_id), rec_recipe.ingredient_id, v_threshold * 10, 'new');
+                    VALUES (v_restaurant_id, rec_recipe.ingredient_id, v_min_threshold * 10, 'new');
                 END IF;
             END IF;
         END LOOP;
     END LOOP;
 
-    -- обновляем доступность блюд после успешного списания
-    PERFORM fn_update_dishes_availability_for_restaurant((SELECT restaurant_id FROM orders WHERE id = p_order_id));
+    -- Обновляем доступность блюд
+    PERFORM fn_update_dishes_availability_for_restaurant(v_restaurant_id);
 END;
 $$;
 
@@ -840,20 +854,41 @@ WHERE u.username = 'waiter2';
 -- БЛЮДА
 -- =========================
 INSERT INTO dishes (restaurant_id, name, category, price, prep_time_minutes) VALUES
-(1, 'Паста Карбонара', 'Паста', 550, 20),
-(1, 'Цезарь с курицей', 'Салаты', 480, 15),
-(1, 'Тирамису', 'Десерты', 350, 10),
-(1, 'Борщ', 'Супы', 280, 25),
-(2, 'Пицца Маргарита', 'Пицца', 600, 30),
-(2, 'Пицца Пепперони', 'Пицца', 680, 30),
-(2, 'Цезарь с курицей', 'Салаты', 500, 15),
-(2, 'Капрезе', 'Салаты', 390, 15),
-(3, 'Суп Том Ям', 'Супы', 520, 25),
-(3, 'Рис с овощами', 'Гарниры', 310, 25),
+(1, 'Паста Карбонара', 'Паста', 650, 20),
+(1, 'Цезарь с курицей', 'Салаты', 700, 15),
+(1, 'Тирамису', 'Десерты', 400, 10),
+(1, 'Борщ', 'Супы', 375, 25),
+(1, 'Паста Феттучини', 'Паста', 750, 20),
+
+(2, 'Пицца Маргарита', 'Пицца', 800, 30),
+(2, 'Пицца Пепперони', 'Пицца', 1000, 30),
+(2, 'Паста Карбонара', 'Паста', 660, 20),
+(2, 'Цезарь с курицей', 'Салаты', 700, 15),
+(2, 'Капрезе', 'Салаты', 600, 15),
+
+(3, 'Суп Том Ям', 'Супы', 700, 25),
+(3, 'Жареный лосось', 'Горячее', 900, 20),
+(3, 'Жареный рис с курицей', 'Горячее', 600, 25),
+(3, 'Томатный суп с курицей', 'Супы', 650, 20),
+(3, 'Овощной салат', 'Салат', 500, 10),
+
 (4, 'Томленная говядина', 'Горячее', 2000, 35),
-(4, 'Тар-тар из говядины', 'Деликатесы', 1200, 10),
-(4, 'Тар-тар из лосося', 'Деликатесы', 1200, 10),
-(5, 'Пицца Мортаделла', 'Пицца', 1200, 25);
+(4, 'Тар-тар из говядины', 'Деликатесы', 1500, 10),
+(4, 'Жареный лосось', 'Горячее', 1500, 20),
+(4, 'Стейк', 'Горячее', 1650, 15),
+(4, 'Русский салат', 'Салат', 600, 10),
+
+(5, 'Рис с говядиной', 'Горячее', 1400, 25),
+(5, 'Тар-тар из говядины', 'Деликатесы', 1500, 10),
+(5, 'Тар-тар из лосося', 'Деликатесы', 1500, 10),
+(5, 'Тирамису', 'Десерт', 500, 5),
+(5, 'Русский салат', 'Салат', 600, 10),
+
+(6, 'Пицца Мортаделла', 'Пицца', 1350, 25),
+(6, 'Жареный рис с курицей', 'Горячее', 650, 25),
+(6, 'Жареный лосось', 'Горячее', 1500, 20),
+(6, 'Овощной салат', 'Салат', 700, 10),
+(6, 'Греческий салат', 'Салат', 750, 10);
 
 -- =========================
 -- ИНГРЕДИЕНТЫ
@@ -868,63 +903,144 @@ INSERT INTO ingredients (name, unit) VALUES
 ('Мука', 'г'),
 ('Томаты', 'г'),
 ('Сыр Моцарелла', 'г'),
-('Пепперони', 'г'),
-('Овощи', 'г'),
+('Пепперони', 'г'), -- 10
+('Овощи', 'г'), -- 11
 ('Говядина', 'г'),
 ('Лосось', 'г'),
 ('Мортаделла', 'г'),
-('Рис', 'г');
+('Рис', 'г'), -- 15
+('Тирамису', 'г'),
+('Огурец', 'г'),
+('Маслины', 'г'),
+('Лук', 'г'),
+('Сливки', 'г'), -- 20
+('Базилик', 'г');
 
 
 -- =========================
 -- СОСТАВ БЛЮД
 -- =========================
--- СОСТАВ БЛЮД
 INSERT INTO dish_ingredients (dish_id, ingredient_id, qty_required) VALUES
-    -- Паста Карбонара (id=1)
-    (1, 1, 120),  -- Спагетти
-    (1, 2, 50),   -- Бекон
-    (1, 3, 1),    -- Яйцо
-    (1, 4, 20),   -- Пармезан
-    -- Цезарь с курицей (id=2)
-    (2, 5, 120),  -- Курица
-    (2, 6, 80),   -- Салат Романо
-    -- Тирамису (id=3)
-    (3, 3, 2),    -- Яйцо
-    (3, 4, 30),   -- Пармезан
-    -- Борщ (id=4) — не заказан
-    (4, 5, 200),  -- Курица
-    -- Пицца Маргарита (id=5)
-    (5, 7, 200),  -- Мука
-    (5, 8, 150),  -- Томаты
-    (5, 9, 100),  -- Моцарелла
-    -- Пицца Пепперони (id=6) ← ИСПРАВЛЕНО!
-    (6, 7, 200),  -- Мука
-    (6, 8, 150),  -- Томаты
-    (6, 9, 100),  -- Моцарелла
-    (6, 10, 80),  -- Пепперони
-    -- Цезарь с курицей (id=7) в Pasta House — не заказан
-    (7, 5, 120),  -- Курица
-    (7, 6, 80),   -- Салат Романо
-    -- Капрезе (id=8) — не заказан
-    (8, 8, 100),  -- Томаты
-    (8, 9, 150),  -- Моцарелла
-    -- Суп Том Ям (id=9)
-    (9, 5, 150),  -- Курица
-    -- Рис с овощами (id=10)
-    (10, 15, 100), -- рис
-    (10, 11, 150),-- Овощи
-    -- Томленная говядина (id=11)
-    (11, 12, 300),-- Говядина
-    -- Тар-тар из говядины (id=12)
-    (12, 12, 200),-- Говядина
-    -- Тар-тар из лосося (id=13)
-    (13, 13, 200),-- Лосось
-    -- Пицца Мортаделла (id=14)
-    (14, 7, 200), -- Мука
-    (14, 8, 150), -- Томаты
-    (14, 9, 100), -- Моцарелла
-    (14, 14, 100);-- Мортаделла
+
+-- 1 Паста Карбонара
+(1, 1, 120),
+(1, 2, 50),
+(1, 3, 1),
+(1, 4, 20),
+
+-- 2 Цезарь с курицей
+(2, 5, 120),
+(2, 6, 80),
+(2, 4, 20),
+
+-- 3 Тирамису
+(3, 16, 2),
+
+-- 4 Борщ
+(4, 12, 150),
+(4, 11, 200),
+
+-- 5 Паста Феттучини
+(5, 1, 120),
+(5, 4, 30),
+
+-- 6 Пицца Маргарита
+(6, 7, 200),
+(6, 8, 150),
+(6, 9, 120),
+
+-- 7 Пицца Пепперони
+(7, 7, 200),
+(7, 8, 150),
+(7, 9, 120),
+(7, 10, 80),
+
+-- 8 Паста Карбонара
+(8, 1, 120),
+(8, 2, 50),
+(8, 3, 1),
+(8, 4, 20),
+
+-- 9 Цезарь с курицей
+(9, 5, 120),
+(9, 6, 80),
+(9, 4, 20),
+
+-- 10 Капрезе
+(10, 8, 120),
+(10, 9, 150),
+(10, 21, 10),
+
+-- 11 Суп Том Ям
+(11, 5, 150),
+(11, 11, 100),
+
+-- 12 Жареный лосось
+(12, 13, 250),
+
+-- 13 Жареный рис с курицей
+(13, 15, 180),
+(13, 5, 120),
+
+-- 14 Томатный суп с курицей
+(14, 8, 200),
+(14, 5, 120),
+
+-- 15 Овощной салат
+(15, 11, 200),
+
+-- 16 Томленная говядина
+(16, 12, 300),
+
+-- 17 Тар-тар из говядины
+(17, 12, 200),
+
+-- 18 Жареный лосось
+(18, 13, 250),
+
+-- 19 Стейк
+(19, 12, 350),
+
+-- 20 Русский салат
+(20, 11, 200),
+(20, 19, 80),
+
+-- 21 Рис с говядиной
+(21, 15, 180),
+(21, 12, 150),
+
+-- 22 Тар-тар из говядины
+(22, 12, 200),
+
+-- 23 Тар-тар из лосося
+(23, 13, 200),
+
+-- 24 Тирамису
+(24, 16, 2),
+-- 25 Русский салат
+(25, 8, 200),
+(25, 19, 80),
+
+-- 26 Пицца Мортаделла
+(26, 7, 200),
+(26, 8, 150),
+(26, 9, 120),
+(26, 14, 100),
+
+-- 27 Жареный рис с курицей
+(27, 15, 180),
+(27, 5, 120),
+
+-- 28 Жареный лосось
+(28, 13, 250),
+
+-- 29 Овощной салат
+(29, 11, 200),
+
+-- 30 Греческий салат
+(30, 8, 120),
+(30, 9, 150);
+
 
 INSERT INTO dish_ingredients (dish_id, ingredient_id, qty_required)
 SELECT 8, id, 100
@@ -936,127 +1052,203 @@ WHERE name = 'Фуа-гра';
 -- =========================
 -- Central Restaurant (id=1): Паста, Салаты, Десерты
 INSERT INTO ingredient_batches (ingredient_id, restaurant_id, batch_no, min_threshold, qty, expiry_date) VALUES
-(1, 1, 'BATCH-001', 5, 5000, now() + interval '15 days'),  -- Спагетти
-(2, 1, 'BATCH-002', 5, 1000, now() + interval '10 days'),  -- Бекон
-(3, 1, 'BATCH-003', 5, 200,  now() + interval '14 days'),  -- Яйцо
-(4, 1, 'BATCH-004', 5, 1500, now() + interval '30 days'),  -- Пармезан
-(5, 1, 'BATCH-005', 5, 3000, now() + interval '6 days'),   -- Курица
-(6, 1, 'BATCH-006', 5, 2000, now() + interval '10 days');  -- Салат
+(1, 1, 'SPAGETTI-CENTRAL', 5, 5000, now() + interval '15 days'),  -- Спагетти
+(2, 1, 'BACON-CENTRAL', 5, 1000, now() + interval '10 days'),  -- Бекон
+(3, 1, 'EGGS-CENTRAL', 5, 2000,  now() + interval '14 days'),  -- Яйцо
+(4, 1, 'PARMEZAN-CENTRAL', 5, 1500, now() + interval '30 days'),  -- Пармезан
+(5, 1, 'CHICKEN-CENTRAL', 5, 3000, now() + interval '6 days'),   -- Курица
+(6, 1, 'SALAD-CENTRAL', 5, 2000, now() + interval '10 days'),  -- Салат
+(11, 1, 'VEG-CENTRAL', 5, 3000, now() + interval '6 days'),   -- овощи
+(12, 1, 'MEET-CENTRAL', 5, 3000, now() + interval '6 days'),   -- мясо
+(16, 1, 'TIRAMISY-CENTRAL', 5, 1000, now() + interval '2 days'),
+(20,1, 'SLIVKI-CENTRAL', 10, 1500, now() + interval '15 days');
+
 
 -- Pasta House (id=2): Пиццы
 INSERT INTO ingredient_batches (ingredient_id, restaurant_id, batch_no, min_threshold, qty, expiry_date) VALUES
-(7, 2, 'FLOUR-001', 200, 5000, now() + interval '20 days'),  -- Мука
-(8, 2, 'TOMATO-001', 150, 2000, now() + interval '10 days'), -- Томаты
-(9, 2, 'CHEESE-001', 100, 1500, now() + interval '15 days'),-- Моцарелла
-(10, 2, 'PEPP-001', 50, 1000, now() + interval '12 days'); -- Пепперони
+(1, 2, 'SPAGETTI-PASTA', 5, 500000, now() + interval '15 days'),  -- Спагетти
+(2, 2, 'BACON-PASTA', 5, 100000, now() + interval '10 days'),  -- Бекон
+(3, 2, 'EGGS-PASTA', 5, 200000,  now() + interval '14 days'),  -- Яйцо
+(4, 2, 'PARMEZAN-PASTA', 5, 150000, now() + interval '30 days'),  -- Пармезан
+(5, 2, 'CHICKEN-PASTA', 5, 300000, now() + interval '6 days'),   -- Курица
+(6, 2, 'SALAD-PASTA', 5, 200000, now() + interval '10 days'),  -- Салат
+(7, 2, 'FLOUR-PASTA', 200, 300000, now() + interval '20 days'),  -- Мука
+(8, 2, 'TOMATO-PASTA', 150, 200000, now() + interval '10 days'), -- Томаты
+(9, 2, 'MOZARELLA-PASTA', 100, 150000, now() + interval '15 days'), -- Моцарелла
+(10, 2, 'PEPPERONI-PASTA', 100, 150000, now() + interval '15 days'); -- Пепперони
+
 
 -- Nord Cafe (id=3): Супы, Гарниры, Горячее
 INSERT INTO ingredient_batches (ingredient_id, restaurant_id, batch_no, min_threshold, qty, expiry_date) VALUES
-(5, 3, 'CHICKEN-NORD', 100, 800, now() + interval '8 days'),    -- Курица
-(6, 3, 'SALAD-NORD', 80, 500, now() + interval '10 days'),     -- Салат
-(11, 3, 'VEG-NORD', 100, 500, now() + interval '10 days'),     -- Овощи
-(12, 3, 'BEEF-NORD', 150, 600, now() + interval '7 days'),    -- Говядина
-(15, 3, 'RICE-NORD', 5, 700, now() + interval '30 days');
+(5, 3, 'CHICKEN-NORD', 5, 300000, now() + interval '6 days'),   -- Курица
+(6, 3, 'SALAD-NORD', 5, 200000, now() + interval '10 days'),  -- Салат
+(8, 3, 'TOMATO-NORD', 150, 200000, now() + interval '10 days'), -- Томаты
+(11, 3, 'VEG-NORD', 100, 150000, now() + interval '15 days'), -- ОВОЩИ
+(13, 3, 'SALMON-NORD', 100, 150000, now() + interval '15 days'), -- Лосось
+(15, 3, 'RICE-NORD', 100, 150000, now() + interval '15 days'),
+(17, 3, 'CUCUMBER-NORD', 100, 150000, now() + interval '15 days');
 
 -- Volga Food (id=4): Русская кухня
 INSERT INTO ingredient_batches (ingredient_id, restaurant_id, batch_no, min_threshold, qty, expiry_date) VALUES
-(5, 4, 'CHICKEN-VOLGA', 100, 1000, now() + interval '7 days'), -- Курица
-(15, 4, 'RICE-VOLGA', 5, 1000, now() + interval '30 days'),
-(11, 4, 'VEG-VOLGA', 100, 800, now() + interval '10 days');   -- Овощи
+(8, 4, 'TOMATO-VOLGA', 150, 200000, now() + interval '10 days'), -- Томаты
+(11, 4, 'VEG-NORD', 100, 150000, now() + interval '15 days'), -- ОВОЩИ
+(12, 4, 'MEET-VOLGA', 100, 150000, now() + interval '15 days'), -- Говядина
+(13, 4, 'SALMON-VOLGA', 100, 150000, now() + interval '15 days'), -- Лосось
+(19, 4, 'ONOION-VOLGA', 100, 150000, now() + interval '15 days'); -- ЛУК
 
 -- Siberia Grill (id=5): Премиум-блюда
 INSERT INTO ingredient_batches (ingredient_id, restaurant_id, batch_no, min_threshold, qty, expiry_date) VALUES
-(12, 5, 'BEEF-SIB', 100, 500, now() + interval '10 days'),     -- Говядина
-(13, 5, 'SALMON-SIB', 50, 300, now() + interval '7 days');    -- Лосось
+(8, 5, 'TOMATO-SIB', 150, 200000, now() + interval '10 days'), -- Томаты
+(12, 5, 'MEET-SIB', 100, 150000, now() + interval '15 days'), -- Говядина
+(13, 5, 'SALMON-SIB', 100, 150000, now() + interval '15 days'), -- Лосось
+(15, 5, 'RICE-SIB', 100, 150000, now() + interval '15 days'),
+(16, 5, 'TIRAMISY-SIB', 100, 150000, now() + interval '15 days'),
+(19, 5, 'ONION-SIB', 100, 150000, now() + interval '15 days');
 
 -- Balzi Rossi (id=6): Итальянская пицца
 INSERT INTO ingredient_batches (ingredient_id, restaurant_id, batch_no, min_threshold, qty, expiry_date) VALUES
-(7, 6, 'FLOUR-BALZI', 200, 3000, now() + interval '20 days'),  -- Мука
-(8, 6, 'TOMATO-BALZI', 150, 2000, now() + interval '10 days'), -- Томаты
-(9, 6, 'CHEESE-BALZI', 100, 1500, now() + interval '15 days'), -- Моцарелла
-(14, 6, 'MORTA-BALZI', 50, 500, now() + interval '12 days');  -- Мортаделла
+(5, 6, 'CHICKEN-BALZI', 5, 300000, now() + interval '6 days'),   -- Курица
+(6, 6, 'SALAD-BALZI', 5, 200000, now() + interval '10 days'),  -- Салат
+(7, 6, 'FLOUR-BALZI', 200, 300000, now() + interval '20 days'),  -- Мука
+(8, 6, 'TOMATO-BALZI', 150, 200000, now() + interval '10 days'), -- Томаты
+(9, 6, 'MOZARELLA-BALZI', 100, 150000, now() + interval '15 days'), -- Моцарелла
+(11, 6, 'VEG-BALZI', 100, 150000, now() + interval '15 days'), -- Овощи
+(13, 6, 'SALMON-BALZI', 100, 150000, now() + interval '15 days'), -- Лосось
+(14, 6, 'MORTA-BALZI', 50, 500000, now() + interval '12 days'), -- Мортаделла
+(15, 6, 'RICE-BALZI', 100, 150000, now() + interval '15 days'),
+(17, 6, 'CUCUMBER-BALZI', 100, 150000, now() + interval '15 days'),
+(18, 6, 'MASLIN-BALZI', 100, 150000, now() + interval '15 days');
+
 
 -- =========================
 -- ЗАКАЗЫ и столы
 -- =========================
 -- Столы для Central Restaurant (id=1)
-INSERT INTO restaurant_tables (restaurant_id, table_number, seats) VALUES
-(1, '1', 4),
-(1, '2', 6);
-
--- Столы для Pasta House (id=2)
-INSERT INTO restaurant_tables (restaurant_id, table_number, seats) VALUES
-(2, '1', 4),
-(2, '2', 4),
-(2, '3', 8);
-
--- Столы для Nord Cafe (id=3)
-INSERT INTO restaurant_tables (restaurant_id, table_number, seats) VALUES
-(3, '1', 2),
-(3, '2', 4),
-(3, '3', 4),
-(3, '4', 6);
-
--- Столы для Volga Food (id=4)
-INSERT INTO restaurant_tables (restaurant_id, table_number, seats) VALUES
-(4, '1', 2),
-(4, '2', 4),
-(4, '3', 4),
-(4, '4', 6);
-
--- Столы для Siberia Grill (id=5)
-INSERT INTO restaurant_tables (restaurant_id, table_number, seats) VALUES
-(5, '1', 2),
-(5, '2', 4),
-(5, '3', 4),
-(5, '4', 6);
-
--- Столы для Balzi Rossi (id=6)
-INSERT INTO restaurant_tables (restaurant_id, table_number, seats) VALUES
-(6, '1', 2),
-(6, '2', 4),
-(6, '3', 4),
-(6, '4', 6);
+-- Столы: по 5 на каждый ресторан
+DO $$
+BEGIN
+    FOR r IN 1..6 LOOP
+        FOR t IN 1..5 LOOP
+            INSERT INTO restaurant_tables (restaurant_id, table_number, seats)
+            VALUES (r, t::TEXT, CASE WHEN t <= 3 THEN 4 ELSE 6 END);
+        END LOOP;
+    END LOOP;
+END $$;
 
 -- Central Restaurant (id=1)
 INSERT INTO orders (restaurant_id, table_id, guest_name, status, created_by_user) VALUES
 (1, 1, 'Иван Петров', 'created', (SELECT id FROM app_users WHERE username = 'waiter1'));
 INSERT INTO order_items (order_id, dish_id, qty, price_at_order) VALUES
-(1, 1, 2, 550),  -- Паста Карбонара
-(1, 2, 1, 480);  -- Цезарь с курицей
+(1, 1, 2, 650),  -- Паста Карбонара
+(1, 2, 1, 700);  -- Цезарь с курицей
 
 -- Pasta House (id=2)
 INSERT INTO orders (restaurant_id, table_id, guest_name, status, created_by_user) VALUES
 (2, 2, 'Алексей Кузнецов', 'created', (SELECT id FROM app_users WHERE username = 'waiter2'));
 INSERT INTO order_items (order_id, dish_id, qty, price_at_order) VALUES
-(2, 5, 1, 600),  -- Пицца Маргарита
-(2, 6, 1, 680);  -- Пицца Пепперони
+(2, 7, 1, 1000),  -- Пицца Пепперони
+(2, 6, 1, 800);   -- Пицца Маргарита
 
 -- Nord Cafe (id=3)
 INSERT INTO orders (restaurant_id, table_id, guest_name, status, created_by_user) VALUES
 (3, 1, 'Елена Волкова', 'created', (SELECT id FROM app_users WHERE username = 'waiter2'));
 INSERT INTO order_items (order_id, dish_id, qty, price_at_order) VALUES
-(3, 9, 1, 520),   -- Суп Том Ям
-(3, 10, 2, 310);  -- Рис с овощами
+(3, 11, 1, 700),  -- Суп Том Ям
+(3, 12, 2, 600);  -- Жареный рис с курицей
 
 -- Volga Food (id=4)
 INSERT INTO orders (restaurant_id, table_id, guest_name, status, created_by_user) VALUES
 (4, 2, 'Дмитрий Смирнов', 'created', (SELECT id FROM app_users WHERE username = 'waiter1'));
 INSERT INTO order_items (order_id, dish_id, qty, price_at_order) VALUES
-(4, 10, 3, 310);  -- Рис с овощами
+(4, 16, 1, 2000),  -- Томленная говядина
+(4, 20, 1, 600);  -- Русский салат
 
 -- Siberia Grill (id=5)
 INSERT INTO orders (restaurant_id, table_id, guest_name, status, created_by_user) VALUES
 (5, 1, 'Ольга Новикова', 'created', (SELECT id FROM app_users WHERE username = 'waiter1'));
 INSERT INTO order_items (order_id, dish_id, qty, price_at_order) VALUES
-(5, 11, 1, 2000), -- Томленная говядина
-(5, 13, 1, 1200); -- Тар-тар из лосося
+(5, 21, 1, 1400), -- Рис с говядиной
+(5, 23, 1, 1500); -- Тар-тар из лосося
 
 -- Balzi Rossi (id=6)
 INSERT INTO orders (restaurant_id, table_id, guest_name, status, created_by_user) VALUES
 (6, 2, 'Сергей Иванов', 'created', (SELECT id FROM app_users WHERE username = 'waiter2'));
 INSERT INTO order_items (order_id, dish_id, qty, price_at_order) VALUES
-(6, 14, 2, 1200); -- Пицца Мортаделла
+(6, 26, 2, 1350); -- Пицца Мортаделла
+
+-- =========================
+-- ДОПОЛНИТЕЛЬНЫЕ ЗАКАЗЫ (по 2 на ресторан)
+-- =========================
+INSERT INTO orders (restaurant_id, table_id, guest_name, status, created_by_user, order_time) VALUES
+(1, 2, 'Анна Сидорова', 'created', (SELECT id FROM app_users WHERE username = 'waiter1'), '2025-12-18 09:15:00');
+INSERT INTO order_items (order_id, dish_id, qty, price_at_order) VALUES
+(7, 1, 1, 650),  -- Паста Карбонара
+(7, 3, 1, 400);  -- Тирамису
+
+INSERT INTO orders (restaurant_id, table_id, guest_name, status, created_by_user, order_time) VALUES
+(1, 1, 'Михаил Петров', 'created', (SELECT id FROM app_users WHERE username = 'waiter1'), '2025-12-18 22:45:00');
+INSERT INTO order_items (order_id, dish_id, qty, price_at_order) VALUES
+(8, 2, 2, 700);  -- Цезарь с курицей
+
+-- Pasta House (id=2) — заказы 9, 10
+INSERT INTO orders (restaurant_id, table_id, guest_name, status, created_by_user, order_time) VALUES
+(2, 1, 'Ольга Иванова', 'created', (SELECT id FROM app_users WHERE username = 'waiter2'), '2025-12-18 13:20:00');
+INSERT INTO order_items (order_id, dish_id, qty, price_at_order) VALUES
+(9, 7, 2, 1000), -- Пицца Пепперони
+(9, 8, 1, 660);  -- Паста Карбонара
+
+INSERT INTO orders (restaurant_id, table_id, guest_name, status, created_by_user, order_time) VALUES
+(2, 3, 'Дмитрий Кузнецов', 'created', (SELECT id FROM app_users WHERE username = 'waiter2'), '2025-12-18 20:30:00');
+INSERT INTO order_items (order_id, dish_id, qty, price_at_order) VALUES
+(10, 9, 1, 700), -- Цезарь с курицей
+(10, 7, 1, 1000);
+
+-- Nord Cafe (id=3) — заказы 11, 12
+INSERT INTO orders (restaurant_id, table_id, guest_name, status, created_by_user, order_time) VALUES
+(3, 2, 'Екатерина Смирнова', 'created', (SELECT id FROM app_users WHERE username = 'waiter2'), '2025-12-18 11:00:00');
+INSERT INTO order_items (order_id, dish_id, qty, price_at_order) VALUES
+(11, 11, 1, 700); -- Суп Том Ям
+
+INSERT INTO orders (restaurant_id, table_id, guest_name, status, created_by_user, order_time) VALUES
+(3, 4, 'Артём Волков', 'created', (SELECT id FROM app_users WHERE username = 'waiter2'), '2025-12-18 19:20:00');
+INSERT INTO order_items (order_id, dish_id, qty, price_at_order) VALUES
+(12, 13, 2, 600); -- Жареный рис с курицей
+
+-- Volga Food (id=4) — заказы 13, 14
+INSERT INTO orders (restaurant_id, table_id, guest_name, status, created_by_user, order_time) VALUES
+(4, 1, 'Сергей Новиков', 'created', (SELECT id FROM app_users WHERE username = 'waiter1'), '2025-12-18 12:10:00');
+INSERT INTO order_items (order_id, dish_id, qty, price_at_order) VALUES
+(13, 19, 1, 1650); -- Стейк
+
+INSERT INTO orders (restaurant_id, table_id, guest_name, status, created_by_user, order_time) VALUES
+(4, 3, 'Наталья Попова', 'created', (SELECT id FROM app_users WHERE username = 'waiter1'), '2025-12-18 21:00:00');
+INSERT INTO order_items (order_id, dish_id, qty, price_at_order) VALUES
+(14, 16, 2, 2000); -- Томленная говядина
+
+-- Siberia Grill (id=5) — заказы 15, 16
+INSERT INTO orders (restaurant_id, table_id, guest_name, status, created_by_user, order_time) VALUES
+(5, 2, 'Илья Морозов', 'created', (SELECT id FROM app_users WHERE username = 'waiter1'), '2025-12-18 14:50:00');
+INSERT INTO order_items (order_id, dish_id, qty, price_at_order) VALUES
+(15, 22, 1, 1500); -- Тар-тар из говядины
+
+INSERT INTO orders (restaurant_id, table_id, guest_name, status, created_by_user, order_time) VALUES
+(5, 4, 'Виктория Зайцева', 'created', (SELECT id FROM app_users WHERE username = 'waiter1'), '2025-12-18 22:00:00');
+INSERT INTO order_items (order_id, dish_id, qty, price_at_order) VALUES
+(16, 23, 1, 1500), -- Тар-тар из лосося
+(16, 25, 1, 600); -- Русский салат
+
+-- Balzi Rossi (id=6) — заказы 17, 18
+INSERT INTO orders (restaurant_id, table_id, guest_name, status, created_by_user, order_time) VALUES
+(6, 1, 'Роман Кузнецов', 'created', (SELECT id FROM app_users WHERE username = 'waiter2'), '2025-12-18 10:30:00');
+INSERT INTO order_items (order_id, dish_id, qty, price_at_order) VALUES
+(17, 26, 1, 1350); -- Пицца Мортаделла
+
+INSERT INTO orders (restaurant_id, table_id, guest_name, status, created_by_user, order_time) VALUES
+(6, 3, 'Людмила Орлова', 'created', (SELECT id FROM app_users WHERE username = 'waiter2'), '2025-12-18 18:45:00');
+INSERT INTO order_items (order_id, dish_id, qty, price_at_order) VALUES
+(18, 30, 1, 750), -- Греческий салат
+(18, 28, 2, 1500); -- Жареный лосось
+
 
 UPDATE orders SET order_time = '2025-12-19 12:30:00' WHERE id = 1;  -- Central Restaurant (днём)
 UPDATE orders SET order_time = '2025-12-19 20:15:00' WHERE id = 2;  -- Pasta House (вечер)
@@ -1074,3 +1266,15 @@ SELECT fn_finalize_order(3);
 SELECT fn_finalize_order(4);
 SELECT fn_finalize_order(5);
 SELECT fn_finalize_order(6);
+SELECT fn_finalize_order(7);
+SELECT fn_finalize_order(8);
+SELECT fn_finalize_order(9);
+SELECT fn_finalize_order(10);
+SELECT fn_finalize_order(11);
+SELECT fn_finalize_order(12);
+SELECT fn_finalize_order(13);
+SELECT fn_finalize_order(14);
+SELECT fn_finalize_order(15);
+SELECT fn_finalize_order(16);
+SELECT fn_finalize_order(17);
+SELECT fn_finalize_order(18);
