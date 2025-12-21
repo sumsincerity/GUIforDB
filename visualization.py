@@ -5,7 +5,6 @@ import matplotlib.pyplot as plt
 import warnings
 warnings.filterwarnings('ignore')
 
-# ================== CONFIG ==================
 DB_CONFIG = {
     "dbname": "restaurant_management",
     "user": "restaurant_admin",
@@ -14,13 +13,10 @@ DB_CONFIG = {
     "port": 5432
 }
 
-# Создаём папку visualizations, если её нет
 os.makedirs("visualizations", exist_ok=True)
 
-# ================== CONNECTION ==================
 conn = psycopg2.connect(**DB_CONFIG)
 
-# ================== 1. Популярные блюда ==================
 sql_popular_dishes = """
 SELECT
     r.name AS restaurant,
@@ -46,7 +42,6 @@ for restaurant in df['restaurant'].unique():
     plt.savefig(f"visualizations/top_dishes_{restaurant}.png")
     plt.close()  # Закрываем фигуру
 
-# ================== 2. Загруженность по часам ==================
 sql_hours = """
 SELECT
     r.name AS restaurant,
@@ -72,7 +67,6 @@ for restaurant in df_hours['restaurant'].unique():
     plt.savefig(f"visualizations/hourly_load_{restaurant}.png")
     plt.close()
 
-# ================== 3. Прибыль по категориям ==================
 sql_category = """
 SELECT
     r.name AS restaurant,
@@ -98,7 +92,6 @@ for restaurant in df_cat['restaurant'].unique():
     plt.savefig(f"visualizations/category_revenue_{restaurant}.png")
     plt.close()
 
-# ================== 4. Топ ингредиентов ==================
 sql_ing = """
 SELECT
     i.name,
@@ -122,7 +115,6 @@ plt.tight_layout()
 plt.savefig("visualizations/top_ingredients.png")
 plt.close()
 
-# Закрываем соединение
 conn.close()
 
-print("✅ Все графики сохранены в папку 'visualizations'")
+print("Все графики сохранены в папку 'visualizations'")

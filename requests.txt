@@ -198,3 +198,100 @@ ORDER BY total_used_in_popular DESC;
 Cluster 0 — популярные дешёвые
 Cluster 1 — редкие дорогие
 Cluster 2 — ключевые блюда меню
+
+Все сотрудники имеют аккаунты?
+SELECT e.full_name, u.username, aur.restaurant_id, ar.name AS role
+FROM employees e
+JOIN app_users u ON e.id = u.employee_id
+JOIN app_user_roles aur ON u.id = aur.user_id
+JOIN app_roles ar ON aur.role_id = ar.id
+ORDER BY e.full_name;
+
+ЗАКАЗЫ ОФИЦИАНТЫ
+SELECT
+    u.username,
+    ar.name AS role,
+    r.name AS restaurant
+FROM app_user_roles aur
+JOIN app_users u ON aur.user_id = u.id
+JOIN app_roles ar ON aur.role_id = ar.id
+LEFT JOIN restaurants r ON aur.restaurant_id = r.id
+ORDER BY u.username;SELECT
+    o.id AS order_id,
+    r.name AS restaurant,
+    e.full_name AS waiter_name,
+    o.guest_name,
+    o.order_time,
+    o.status
+FROM orders o
+JOIN restaurants r ON o.restaurant_id = r.id
+JOIN app_users au ON o.created_by_user = au.id
+JOIN employees e ON au.employee_id = e.id
+WHERE e.position = 'Официант'
+ORDER BY o.order_time DESC;
+
+БЛЮДА
+SELECT id, restaurant_id, name
+FROM dishes
+ORDER BY id;
+
+Создаём админа
+INSERT INTO app_users (username, password_hash)
+VALUES (
+    'superadmin',
+    '$2b$12$ваш_хеш_здесь'
+);
+
+-- Привязываем роль admin (без ресторана)
+INSERT INTO app_user_roles (user_id, role_id, restaurant_id)
+SELECT
+    (SELECT id FROM app_users WHERE username = 'superadmin'),
+    (SELECT id FROM app_roles WHERE name = 'admin'),
+    NULL;
+# Зайдите в контейнер с PostgreSQL
+docker compose exec postgres psql -U restaurant_admin restaurant_management
+
+Проверка автозаявки
+-- 1. Установите порог
+UPDATE ingredient_batches SET min_threshold = 100 WHERE ingredient_id = 5 AND restaurant_id = 1;
+
+-- 2. Установите количество чуть выше порога
+UPDATE ingredient_batches SET qty = 300 WHERE ingredient_id = 5 AND restaurant_id = 1;
+
+-- 3. Создайте заказ
+INSERT INTO orders (restaurant_id, guest_name, status, created_by_user)
+VALUES (1, 'Тест заявки', 'created', (SELECT id FROM app_users WHERE username = 'waiter1'))
+RETURNING id;  -- пусть будет 31
+
+INSERT INTO order_items (order_id, dish_id, qty, price_at_order)
+VALUES (31, 2, 2, 700);  -- Цезарь × 2 → 240 г курицы
+
+-- 4. Финализируйте
+SELECT fn_finalize_order(31);
+
+-- 5. Проверьте заявки
+SELECT * FROM purchase_requests
+WHERE restaurant_id = 1 AND ingredient_id = 5;
+
+Проверка доступности
+-- Обнуляем моцареллу в Pasta House
+UPDATE ingredient_batches SET qty = 0, active = FALSE WHERE ingredient_id = 9 AND restaurant_id = 2;
+
+-- Обновляем доступность блюд
+SELECT fn_update_dishes_availability_for_restaurant(2);
+
+-- Проверяем: Пицца Маргарита (dish_id=6) должна быть недоступна
+-- SELECT name, is_available FROM dishes WHERE id = 6;
+
+-- Создаём заказ (но НЕ финализируем, чтобы не ломать скрипт)
+INSERT INTO orders (restaurant_id, table_id, guest_name, status, created_by_user, order_time)
+VALUES (2, 1, 'Тест: Недоступная пицца', 'created', (SELECT id FROM app_users WHERE username = 'waiter3'), '2025-12-22 11:00:00')
+RETURNING id;
+
+-- Пусть order_id = 32
+INSERT INTO order_items (order_id, dish_id, qty, price_at_order)
+VALUES (32, 6, 1, 800);  -- Пицца Маргарита
+
+-- Проверяем альтернативы
+SELECT * FROM fn_suggest_alternatives(6, 2);
+-- ОЖИДАНИЕ: вернёт Пиццу Пепперони (та же категория, доступна)

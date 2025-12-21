@@ -2,7 +2,7 @@ import os
 import bcrypt
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from flask import Flask, render_template, request, redirect, url_for, session, flash
+from flask import Flask, render_template, request, redirect, url_for, session, flash, Response
 from dotenv import load_dotenv
 from datetime import datetime
 
@@ -21,7 +21,6 @@ ROLE_PERMISSIONS = {
 
 
 def format_datetime_columns(rows):
-    """Форматирует все datetime-поля в строку без часового пояса."""
     if not rows:
         return rows
     formatted = []
@@ -78,13 +77,14 @@ def list_columns(table: str):
         for row in rows:
             default = row.get("column_default") or ""
             row["is_serial"] = default.startswith("nextval(") or row.get("is_identity") == "YES"
-        return rows
+        return format_datetime_columns(rows)
 
 
 def list_restaurants() -> list[dict]:
     with get_db_conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute("SELECT id, name FROM restaurants ORDER BY id")
-        return cur.fetchall()
+        rows = cur.fetchall()
+        return format_datetime_columns(rows)
 
 
 def list_roles_public() -> list[str]:
@@ -136,7 +136,8 @@ def get_summary(role: str | None, rest_id: int | None) -> list[dict]:
     """
     with get_db_conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(sql, params)
-        return cur.fetchall()
+        rows = cur.fetchall()
+        return format_datetime_columns(rows)
 
 
 def get_status_counts(role: str | None, rest_id: int | None) -> list[dict]:
@@ -262,7 +263,8 @@ def list_dishes_filtered(
     """
     with get_db_conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(sql, params)
-        return cur.fetchall()
+        rows = cur.fetchall()
+        return format_datetime_columns(rows)
 
 
 def run_report_default():
@@ -879,7 +881,7 @@ def action_menu_filter():
         with get_db_conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(sql, params)
             rows = cur.fetchall()
-            session["menu_last"] = rows
+            session["menu_last"] = format_datetime_columns(rows)
     except Exception as ex:
         flash(f"Ошибка меню: {ex}", "danger")
     return redirect(url_for("dashboard") + "#tab-menu")
@@ -934,10 +936,48 @@ def action_reports_run():
             rows = cur.fetchall()
             cols = list(rows[0].keys()) if rows else [desc.name for desc in cur.description]
             session["report_last"] = {"cols": cols, "rows": rows, "key": key}
+            rows = format_datetime_columns(rows)
+            session["report_last"] = {"cols": cols, "rows": rows, "key": key}
     except Exception as ex:
         flash(f"Ошибка отчета: {ex}", "danger")
     return redirect(url_for("dashboard") + "#tab-reports")
 
+
+import csv
+from io import StringIO
+
+
+@app.route("/api/reports/top_dishes.csv")
+@login_required
+def report_top_dishes_csv():
+    if not has_perm("reports"):
+        return "Доступ запрещён", 403
+
+    with get_db_conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("""
+                    SELECT r.name AS restaurant, d.name AS dish, SUM(oi.qty) AS total
+                    FROM order_items oi
+                             JOIN dishes d ON oi.dish_id = d.id
+                             JOIN orders o ON oi.order_id = o.id
+                             JOIN restaurants r ON o.restaurant_id = r.id
+                    WHERE o.status = 'completed'
+                    GROUP BY r.name, d.name
+                    ORDER BY total DESC LIMIT 20;
+                    """)
+        rows = cur.fetchall()
+
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Ресторан", "Блюдо", "Продано"])
+    for row in rows:
+        writer.writerow(row.values())
+
+    output.seek(0)
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=top_dishes.csv"}
+    )
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=8000)

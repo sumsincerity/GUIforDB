@@ -110,7 +110,6 @@
               <th>Заказы (шт)</th>
               <th>Сумма заказов</th>
               <th>Строк в запасах</th>
-              <th>Суммарное кол-во</th>
             </tr>
           </thead>
           <tbody>
@@ -120,7 +119,6 @@
               <td>{{ r.orders_count }}</td>
               <td>{{ r.orders_sum }}</td>
               <td>{{ r.stocks_count }}</td>
-              <td>{{ r.stocks_qty }}</td>
             </tr>
             {% endfor %}
           </tbody>
@@ -495,6 +493,13 @@
         <span class="badge bg-secondary ms-2">Reports</span>
       </div>
       <form method="post" action="{{ url_for('action_reports_run') }}" class="row g-2">
+        <div class="mt-3">
+            <a href="{{ url_for('report_top_dishes_csv') }}"
+               class="btn btn-success btn-sm"
+               target="_blank">
+                📥 Скачать Топ-блюд (CSV)
+            </a>
+        </div>
         <div class="col-md-3">
           <select class="form-select" name="report">
             <option value="orders_per_restaurant">Orders per restaurant</option>
@@ -654,28 +659,28 @@
         </div>
       </div>
       <hr>
-      <form class="row g-2" method="post" action="{{ url_for('action_context_set') }}">
-        <div class="col-md-3">
-          <label class="form-label">Активная роль</label>
-          <select class="form-select" name="role">
-            {% for r in roles %}
-            <option value="{{ r }}" {% if r==role %}selected{% endif %}>{{ r }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        <div class="col-md-3">
-          <label class="form-label">Ресторан</label>
-          <select class="form-select" name="rest_id">
-            <option value="">Любой</option>
-            {% for r in restaurants %}
-            <option value="{{ r.id }}" {% if current_restaurant==r.id %}selected{% endif %}>{{ r.id }} - {{ r.name }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        <div class="col-md-2 d-flex align-items-end">
-          <button class="btn btn-primary w-100">Применить</button>
-        </div>
-      </form>
+<!--      <form class="row g-2" method="post" action="{{ url_for('action_context_set') }}">-->
+<!--        <div class="col-md-3">-->
+<!--          <label class="form-label">Активная роль</label>-->
+<!--          <select class="form-select" name="role">-->
+<!--            {% for r in roles %}-->
+<!--            <option value="{{ r }}" {% if r==role %}selected{% endif %}>{{ r }}</option>-->
+<!--            {% endfor %}-->
+<!--          </select>-->
+<!--        </div>-->
+<!--        <div class="col-md-3">-->
+<!--          <label class="form-label">Ресторан</label>-->
+<!--          <select class="form-select" name="rest_id">-->
+<!--            <option value="">Любой</option>-->
+<!--            {% for r in restaurants %}-->
+<!--            <option value="{{ r.id }}" {% if current_restaurant==r.id %}selected{% endif %}>{{ r.id }} - {{ r.name }}</option>-->
+<!--            {% endfor %}-->
+<!--          </select>-->
+<!--        </div>-->
+<!--        <div class="col-md-2 d-flex align-items-end">-->
+<!--          <button class="btn btn-primary w-100">Применить</button>-->
+<!--        </div>-->
+<!--      </form>-->
     </div>
   </div>
 </div>
