@@ -18,6 +18,7 @@ CREATE TABLE restaurants (
     phone TEXT,
     capacity INT DEFAULT 0,
     tables_count INT DEFAULT 0,
+    max_concurrent_orders INT DEFAULT 10,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 
@@ -199,6 +200,7 @@ CREATE TABLE orders (
     table_id INT REFERENCES restaurant_tables(id),
     guest_name TEXT,
     created_by_user UUID REFERENCES app_users(id),
+    completed_by_user UUID REFERENCES app_users(id),
     order_time TIMESTAMP WITH TIME ZONE DEFAULT now(),
     scheduled_for TIMESTAMP WITH TIME ZONE,
     status TEXT NOT NULL DEFAULT 'created',
@@ -221,6 +223,62 @@ CREATE TABLE order_items (
     price_at_order NUMERIC(12,2) NOT NULL,
     special_requests TEXT
 );
+
+CREATE OR REPLACE FUNCTION fn_get_eta_for_restaurant(p_restaurant_id INT)
+RETURNS INT LANGUAGE plpgsql AS $$
+DECLARE
+    v_current INT;
+    v_max INT;
+    v_avg_prep_time INT;
+BEGIN
+    SELECT COUNT(*) INTO v_current
+    FROM orders
+    WHERE restaurant_id = p_restaurant_id
+      AND status IN ('created', 'confirmed', 'preparing');
+
+    SELECT max_concurrent_orders INTO v_max FROM restaurants WHERE id = p_restaurant_id;
+    SELECT COALESCE(AVG(prep_time_minutes), 20) INTO v_avg_prep_time
+    FROM dishes WHERE restaurant_id = p_restaurant_id;
+
+    IF v_current < v_max THEN
+        RETURN NULL; -- можно сейчас
+    ELSE
+        -- ETA = (текущие заказы - лимит + 1) * среднее время готовки
+        RETURN (v_current - v_max + 1) * v_avg_prep_time;
+    END IF;
+END;
+$$;
+
+-- Возвращает рестораны в том же городе с доступным ETA
+CREATE OR REPLACE FUNCTION fn_suggest_alternative_restaurants(p_restaurant_id INT)
+RETURNS TABLE (id INT, name TEXT, eta_minutes INT) LANGUAGE sql AS $$
+    WITH current_city AS (
+        SELECT city_id FROM restaurants WHERE id = p_restaurant_id
+    )
+    SELECT r.id, r.name, fn_get_eta_for_restaurant(r.id) AS eta_minutes
+    FROM restaurants r, current_city c
+    WHERE r.city_id = c.city_id
+      AND r.id <> p_restaurant_id
+      AND (fn_get_eta_for_restaurant(r.id) IS NULL OR fn_get_eta_for_restaurant(r.id) < 60)
+    ORDER BY eta_minutes NULLS FIRST
+    LIMIT 3;
+$$;
+
+-- Обновляет completed_by_user при финализации заказа
+CREATE OR REPLACE FUNCTION fn_set_completed_by_user()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.status = 'completed' AND OLD.status <> 'completed' THEN
+        NEW.completed_by_user = current_setting('app.user_id', true)::UUID;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER trg_orders_set_completed_by_user
+BEFORE UPDATE ON orders
+FOR EACH ROW
+EXECUTE FUNCTION fn_set_completed_by_user();
 
 -- пересчитывает сумму заказа
 CREATE OR REPLACE FUNCTION fn_recalc_order_total(p_order_id INT)
@@ -389,25 +447,20 @@ END;
 $$;
 
 -- Завершает заказ (вызывает списание)
-CREATE OR REPLACE FUNCTION fn_finalize_order(p_order_id INT)
+CREATE OR REPLACE FUNCTION fn_finalize_order(p_order_id INT, p_user_id UUID DEFAULT NULL)
 RETURNS VOID LANGUAGE plpgsql AS $$
 BEGIN
-    -- защита от повторной финализации
-    IF EXISTS (
-        SELECT 1 FROM orders
-        WHERE id = p_order_id AND is_finalized = TRUE
-    ) THEN
+    IF EXISTS (SELECT 1 FROM orders WHERE id = p_order_id AND is_finalized = TRUE) THEN
         RAISE EXCEPTION 'Order % already finalized', p_order_id;
     END IF;
 
-    -- списание ингредиентов (основная бизнес-логика)
     PERFORM fn_decrease_stock_for_order(p_order_id);
 
-    -- финальное состояние заказа
     UPDATE orders
     SET is_finalized = TRUE,
         status = 'completed',
-        completed_at = now()
+        completed_at = now(),
+        completed_by_user = COALESCE(p_user_id, created_by_user)  -- ← ИЗМЕНЕНО
     WHERE id = p_order_id;
 END;
 $$;

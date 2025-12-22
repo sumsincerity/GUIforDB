@@ -5,6 +5,8 @@ from psycopg2.extras import RealDictCursor
 from flask import Flask, render_template, request, redirect, url_for, session, flash, Response
 from dotenv import load_dotenv
 from datetime import datetime
+import gspread
+from google.oauth2.service_account import Credentials
 
 load_dotenv()
 
@@ -428,6 +430,94 @@ def logout():
     session.clear()
     return redirect(url_for("login"))
 
+GOOGLE_SHEETS_CONFIG = {
+    "credentials_file": "restaurants_secret.json",
+    "spreadsheet_title": "Restaurant Analytics", }
+
+
+def export_all_safe_tables_to_google_sheets():
+    try:
+        # Список таблиц с чувствительными данными — их НЕ выгружаем
+        SENSITIVE_TABLES = {
+            'app_users',
+            'app_roles',
+            'app_user_roles',
+            'purchase_requests'
+        }
+
+        # Подключаемся к Google Sheets
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+        creds = Credentials.from_service_account_file(
+            GOOGLE_SHEETS_CONFIG["credentials_file"], scopes=scopes
+        )
+        client = gspread.authorize(creds)
+        spreadsheet = client.open(GOOGLE_SHEETS_CONFIG["spreadsheet_title"])
+
+
+        # Получаем список ВСЕХ таблиц
+        with get_db_conn() as conn, conn.cursor() as cur:
+            cur.execute("""
+                        SELECT table_name
+                        FROM information_schema.tables
+                        WHERE table_schema = 'public'
+                          AND table_type = 'BASE TABLE'
+                        ORDER BY table_name;
+                        """)
+            all_tables = {row[0] for row in cur.fetchall()}
+
+        # Фильтруем: только безопасные таблицы
+        safe_tables = sorted(all_tables - SENSITIVE_TABLES)
+
+        if not safe_tables:
+            return False, "Нет безопасных таблиц для выгрузки"
+
+        # Выгружаем каждую таблицу
+        for table_name in safe_tables:
+            try:
+                # Пытаемся получить существующий лист
+                worksheet = spreadsheet.worksheet(table_name)
+            except gspread.exceptions.WorksheetNotFound:
+                # Если нет — создаём
+                worksheet = spreadsheet.add_worksheet(title=table_name, rows="1000", cols="26")
+
+            # Получаем данные (с ограничением для безопасности)
+            with get_db_conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(f"SELECT * FROM {table_name} LIMIT 5000")
+                rows = cur.fetchall()
+
+            if rows:
+                # Заголовки + данные
+                headers = list(rows[0].keys())
+                data = [headers]
+                for row in rows:
+                    # Преобразуем всё в строки, None → пусто
+                    data.append([str(v) if v is not None else "" for v in row.values()])
+
+                worksheet.clear()
+                worksheet.update("A1", data, value_input_option="USER_ENTERED")
+            else:
+                worksheet.clear()
+                worksheet.update("A1", [["Таблица пуста"]])
+
+        return True, f"Успешно выгружено {len(safe_tables)} таблиц: {', '.join(safe_tables)}"
+
+    except Exception as e:
+        return False, f"Ошибка выгрузки: {str(e)}, "
+
+
+@app.route("/action/reports/export_all_safe_tables")
+@login_required
+def action_export_all_safe_tables():
+    if not has_perm("admin"):  # Только админ!
+        flash("Только админ может выгружать все таблицы", "danger")
+        return redirect(url_for("dashboard") + "#tab-reports")
+
+    success, msg = export_all_safe_tables_to_google_sheets()
+    flash(msg, "success" if success else "danger")
+    return redirect(url_for("dashboard") + "#tab-reports")
 
 @app.route("/dashboard")
 @login_required
