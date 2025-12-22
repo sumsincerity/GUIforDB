@@ -58,17 +58,21 @@ CREATE TABLE employee_assignments (
 
 -- триггер, который гарантирует, что сотрудник не может работать в ресторанах из разных городов.
 CREATE OR REPLACE FUNCTION fn_check_employee_assignments_city()
-RETURNS TRIGGER LANGUAGE plpgsql AS $$
+RETURNS TRIGGER
+LANGUAGE plpgsql AS $$
 DECLARE
     rest_city INT;
 BEGIN
     SELECT city_id INTO rest_city FROM restaurants WHERE id = NEW.restaurant_id;
     IF EXISTS (
-        SELECT 1 FROM employee_assignments ea
+        SELECT 1
+        FROM employee_assignments ea
         JOIN restaurants r ON ea.restaurant_id = r.id
-        WHERE ea.employee_id = NEW.employee_id AND r.city_id <> rest_city AND ea.id <> NEW.id
+        WHERE ea.employee_id = NEW.employee_id
+          AND r.city_id <> rest_city
+          AND ea.id <> NEW.id
     ) THEN
-        RAISE EXCEPTION 'Работник % уже зарегистрирован в ресторане другого города', NEW.employee_id;
+        RETURN NULL;
     END IF;
     RETURN NEW;
 END;
@@ -135,9 +139,6 @@ CREATE TABLE ingredient_batches (
     min_threshold NUMERIC(12,4) DEFAULT 0
 );
 
--- индекс для быстрого поиска партий по ingredient и expiry
-CREATE INDEX idx_batches_ingredient_restaurant_expiry ON ingredient_batches (ingredient_id, restaurant_id, expiry_date);
-
 -- Движение на складе
 CREATE TABLE inventory_movements (
     id SERIAL PRIMARY KEY,
@@ -179,11 +180,6 @@ CREATE TABLE dish_ingredients (
     qty_required NUMERIC(12,4) NOT NULL,
     PRIMARY KEY (dish_id, ingredient_id)
 );
-
--- индекс для быстрого поиска блюд по названию (GIN + pg_trgm)
-CREATE INDEX idx_dishes_name_gin ON dishes USING gin (name gin_trgm_ops);
-CREATE INDEX idx_ingredients_name_gin ON ingredients USING gin (name gin_trgm_ops);
-
 -- опциональная история изменения цен блюд
 CREATE TABLE dish_price_history (
     id SERIAL PRIMARY KEY,
@@ -316,8 +312,6 @@ BEGIN
 END;
 $$;
 
-CREATE INDEX idx_orders_restaurant_time ON orders (restaurant_id, order_time);
-
 --  оценки и комментарии к заказам.
 CREATE TABLE feedbacks (
     id SERIAL PRIMARY KEY,
@@ -379,7 +373,6 @@ BEGIN
         LOOP
             v_needed := rec_recipe.qty_required * rec_item.qty;
 
-            -- Списываем партии FIFO (expiry asc, earliest first)
             LOOP
                 IF v_needed <= 0 THEN
                     EXIT;
@@ -395,7 +388,7 @@ BEGIN
                 LIMIT 1;
 
                 IF NOT FOUND THEN
-                    RAISE EXCEPTION 'Not enough ingredient % for restaurant % needed %',
+                    RAISE EXCEPTION 'Не хватает ингридиента % для ресторана % нужно %',
                         rec_recipe.ingredient_id, v_restaurant_id, v_needed;
                 END IF;
 
@@ -451,7 +444,7 @@ CREATE OR REPLACE FUNCTION fn_finalize_order(p_order_id INT, p_user_id UUID DEFA
 RETURNS VOID LANGUAGE plpgsql AS $$
 BEGIN
     IF EXISTS (SELECT 1 FROM orders WHERE id = p_order_id AND is_finalized = TRUE) THEN
-        RAISE EXCEPTION 'Order % already finalized', p_order_id;
+        RETURN;
     END IF;
 
     PERFORM fn_decrease_stock_for_order(p_order_id);
@@ -730,11 +723,17 @@ USING (
     AND id IN (SELECT employee_id FROM employee_assignments WHERE restaurant_id::text = current_setting('app.restaurant_id', true))
 );
 
--- индексы для аналитики
+
+CREATE INDEX idx_ingredient_batches_fifo ON ingredient_batches (
+    ingredient_id,
+    restaurant_id,
+    COALESCE(expiry_date, 'infinity')
+) WHERE active = TRUE AND qty > 0;
+
+CREATE INDEX idx_orders_restaurant_status ON orders (restaurant_id, status);
+
 CREATE INDEX idx_order_items_order_id ON order_items(order_id);
-CREATE INDEX idx_order_items_dish_id ON order_items(dish_id);
-CREATE INDEX idx_dishes_restaurant ON dishes(restaurant_id);
-CREATE INDEX idx_batches_restaurant_ingredient ON ingredient_batches(restaurant_id, ingredient_id);
-CREATE INDEX idx_inventory_movements_restaurant ON inventory_movements(restaurant_id, created_at);
-CREATE INDEX idx_purchase_requests_restaurant ON purchase_requests(restaurant_id, status);
+
 CREATE INDEX idx_dish_ingredients_dish ON dish_ingredients(dish_id);
+
+CREATE INDEX idx_ingredient_batches_restaurant_ingredient_active ON ingredient_batches (restaurant_id, ingredient_id) WHERE active = TRUE;
