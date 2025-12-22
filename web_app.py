@@ -1,230 +1,55 @@
-"""
-===============================================================================
-СИСТЕМА УПРАВЛЕНИЯ РЕСТОРАНАМИ - ГЛАВНЫЙ ФАЙЛ ПРИЛОЖЕНИЯ
-===============================================================================
-
-АРХИТЕКТУРА ПРОЕКТА:
--------------------
-Это веб-приложение на Flask для управления сетью ресторанов. Система предоставляет
-интерфейс для работы с заказами, меню, инвентарем, отчетами и SQL-запросами.
-
-ОСНОВНЫЕ КОМПОНЕНТЫ:
-1. Flask - веб-фреймворк для обработки HTTP-запросов и рендеринга шаблонов
-2. PostgreSQL - реляционная БД для хранения всех данных
-3. Многослойная система защиты от SQL injection (Rule-based + ML)
-4. Система ролей и прав доступа (RBAC)
-
-БЕЗОПАСНОСТЬ:
-------------
-- Все SQL-запросы проверяются через многослойную guard-систему
-- Параметризованные запросы используются везде, где возможно
-- Валидация всех пользовательских вводов
-- Хеширование паролей через bcrypt
-
-СТРУКТУРА ФАЙЛА:
----------------
-1. Импорты и конфигурация
-2. Функции безопасности (валидация SQL идентификаторов)
-3. Вспомогательные функции для работы с БД
-4. Декораторы для авторизации
-5. Эндпоинты Flask (маршруты)
-"""
-
-# ============================================================================
-# ИМПОРТЫ И ЗАВИСИМОСТИ
-# ============================================================================
-
 import os
-# os - для работы с переменными окружения и системными путями
-# Используется для получения конфигурации из .env файла
-
 import bcrypt
-# bcrypt - библиотека для хеширования паролей
-# Выбор: bcrypt - один из самых безопасных алгоритмов хеширования паролей
-# Использует адаптивный алгоритм, который замедляется при увеличении вычислительной мощности
-# Это защищает от brute-force атак
-
 import psycopg2
-# psycopg2 - драйвер PostgreSQL для Python
-# Выбор: официальный и самый популярный драйвер для PostgreSQL
-# Поддерживает все функции PostgreSQL, включая параметризованные запросы
-
 from psycopg2.extras import RealDictCursor
-# RealDictCursor - курсор, который возвращает результаты как словари
-# Вместо кортежей (0, 1, 2) получаем {'id': 0, 'name': 1, 'price': 2}
-# Это делает код более читаемым и устойчивым к изменениям структуры БД
-
 from flask import Flask, render_template, request, redirect, url_for, session, flash, Response
-# Flask - легковесный веб-фреймворк
-# render_template - рендеринг HTML шаблонов с Jinja2
-# request - доступ к данным HTTP-запроса (form, args, json и т.д.)
-# redirect - перенаправление на другой URL
-# url_for - генерация URL по имени функции
-# session - хранение данных пользователя между запросами (на сервере)
-# flash - передача сообщений пользователю (success, error, warning)
-# Response - создание кастомных HTTP-ответов (CSV, JSON и т.д.)
-
 from dotenv import load_dotenv
-# python-dotenv - загрузка переменных окружения из .env файла
-# Позволяет хранить секреты (пароли, ключи) вне кода
-
 from datetime import datetime
-# datetime - работа с датами и временем
-# Используется для форматирования дат из БД для отображения
-
 import gspread
-# gspread - библиотека для работы с Google Sheets API
-# Используется для экспорта данных в Google Sheets
-
 from google.oauth2.service_account import Credentials
-# Credentials - аутентификация в Google API через service account
-# Service account - безопасный способ доступа к API без пользовательского входа
-
 from app.security.sql_guard import validate_sql
-# validate_sql - главная функция многослойной системы защиты от SQL injection
-# Проверяет запросы через whitelist, rule-based и ML-модель
-
 import re
-# re - регулярные выражения
-# Используется для валидации имен таблиц, колонок, паттернов SQL injection
-
-# Загружаем переменные окружения из .env файла
-# Это должно быть сделано до создания Flask приложения
 load_dotenv()
 
-# ============================================================================
-# СОЗДАНИЕ FLASK ПРИЛОЖЕНИЯ
-# ============================================================================
-
 app = Flask(__name__)
-# Flask(__name__) - создание экземпляра Flask приложения
-# __name__ - имя текущего модуля, используется для поиска шаблонов и статических файлов
 
 app.secret_key = os.environ.get("SECRET_KEY", "dev_secret_change_me")
-# secret_key - ключ для подписи сессий и cookies
-# ВАЖНО: В production должен быть установлен через переменную окружения
-# Используется для:
-# - Шифрования данных сессии
-# - Защиты от подделки cookies (CSRF)
-# - Генерации токенов безопасности
-
-# ============================================================================
-# СИСТЕМА РОЛЕЙ И ПРАВ ДОСТУПА (RBAC - Role-Based Access Control)
-# ============================================================================
 
 ROLE_PERMISSIONS = {
-    # Словарь, определяющий права доступа для каждой роли
-    # Структура: "роль": {множество_разрешенных_модулей}
-    
+
     "admin": {"admin", "tables", "query", "inventory", "orders", "menu", "reports", "purchase"},
-    # Администратор - полный доступ ко всем модулям
-    # Может создавать пользователей, выполнять SQL, управлять всем
-    
+
     "analyst": {"tables", "query", "menu", "reports"},
-    # Аналитик - доступ к данным для анализа
-    # Может просматривать таблицы, выполнять SQL-запросы, смотреть отчеты
-    # НЕ может изменять данные (нет inventory, orders, purchase)
-    
+
     "manager": {"tables", "inventory", "orders", "menu", "reports", "purchase"},
-    # Менеджер - управление рестораном
-    # Может управлять заказами, инвентарем, меню, заявками на закупку
-    # НЕ может выполнять произвольные SQL-запросы (нет query)
-    
+
     "cook": {"inventory", "menu", "purchase"},
-    # Повар - работа с инвентарем и меню
-    # Может управлять запасами, меню, создавать заявки на закупку
-    # НЕ может работать с заказами напрямую
-    
+
     "waiter": {"orders", "menu"},
-    # Официант - работа с заказами
-    # Может создавать и управлять заказами, просматривать меню
-    # Минимальные права доступа
 }
-# Использование множеств (set) вместо списков для O(1) проверки принадлежности
-# Это оптимизирует функцию has_perm() для быстрой проверки прав
 
-
-# ============================================================================
-# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ РАБОТЫ С ДАННЫМИ
-# ============================================================================
 
 def format_datetime_columns(rows):
-    """
-    Преобразует объекты datetime в строки для JSON-сериализации.
-    
-    ПРОБЛЕМА: 
-    - Python datetime объекты не могут быть автоматически преобразованы в JSON
-    - При попытке сериализации возникает ошибка TypeError
-    
-    РЕШЕНИЕ:
-    - Преобразуем все datetime объекты в строки формата 'YYYY-MM-DD HH:MM:SS'
-    - Это стандартный формат ISO 8601, который легко парсится обратно
-    
-    АРГУМЕНТЫ:
-        rows: list[dict] - список словарей с данными из БД
-        
-    ВОЗВРАЩАЕТ:
-        list[dict] - тот же список, но с datetime преобразованными в строки
-        
-    ПРИМЕР:
-        Вход: [{'id': 1, 'created_at': datetime(2024, 1, 1, 12, 0, 0)}]
-        Выход: [{'id': 1, 'created_at': '2024-01-01 12:00:00'}]
-    """
+
     if not rows:
-        return rows  # Если список пуст, возвращаем как есть
+        return rows
     
     formatted = []
     for row in rows:
         new_row = {}
         for key, value in row.items():
-            # isinstance() проверяет тип объекта
-            # datetime - класс из модуля datetime
             if isinstance(value, datetime):
-                # strftime() - форматирование даты в строку
-                # '%Y-%m-%d %H:%M:%S' - формат: год-месяц-день час:минута:секунда
                 new_row[key] = value.strftime('%Y-%m-%d %H:%M:%S')
             else:
-                # Если не datetime, оставляем значение как есть
                 new_row[key] = value
         formatted.append(new_row)
     return formatted
 
 
 def get_db_conn():
-    """
-    Создает и возвращает соединение с PostgreSQL базой данных.
-    
-    АРХИТЕКТУРА:
-    - Использует паттерн "Factory Function" - функция создает объект соединения
-    - Соединение должно быть закрыто после использования (через context manager)
-    
-    КОНФИГУРАЦИЯ:
-    - Все параметры берутся из переменных окружения (.env файл)
-    - Значения по умолчанию для локальной разработки
-    
-    БЕЗОПАСНОСТЬ:
-    - Пароли и учетные данные НЕ хранятся в коде
-    - Используются переменные окружения (можно использовать секреты в Docker/K8s)
-    
-    ВОЗВРАЩАЕТ:
-        psycopg2.connection - объект соединения с БД
-        
-    ИСПОЛЬЗОВАНИЕ:
-        with get_db_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT * FROM table")
-                
-    ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ:
-        DB_HOST - хост БД (по умолчанию: localhost)
-        DB_PORT - порт БД (по умолчанию: 5432)
-        DB_NAME - имя базы данных
-        DB_USER - пользователь БД
-        DB_PASSWORD - пароль БД
-    """
+
     return psycopg2.connect(
-        # os.environ.get() - получение переменной окружения с значением по умолчанию
-        # Это позволяет переопределить настройки через .env или Docker
-        host=os.environ.get("DB_HOST", "localhost"),  # В Docker: "postgres"
+        host=os.environ.get("DB_HOST", "localhost"),
         port=os.environ.get("DB_PORT", "5432"),
         dbname=os.environ.get("DB_NAME", "restaurant_management"),
         user=os.environ.get("DB_USER", "restaurant_admin"),
@@ -233,37 +58,7 @@ def get_db_conn():
 
 
 def list_tables():
-    """
-    Получает список всех таблиц в публичной схеме базы данных.
-    
-    НАЗНАЧЕНИЕ:
-    - Используется для валидации имен таблиц (whitelist)
-    - Отображения списка таблиц в UI для просмотра
-    
-    INFORMATION_SCHEMA:
-    - information_schema - стандартная схема SQL, содержащая метаданные БД
-    - Доступна во всех SQL-совместимых БД (PostgreSQL, MySQL, SQL Server)
-    - Безопасна для чтения, не может быть изменена пользователями
-    
-    ЗАПРОС:
-    - table_schema = 'public' - только таблицы в публичной схеме (не системные)
-    - table_type = 'BASE TABLE' - только обычные таблицы (не views, не временные)
-    - ORDER BY - сортировка по имени для удобства
-    
-    БЕЗОПАСНОСТЬ:
-    - Запрос статический, без пользовательского ввода
-    - Используется только для чтения метаданных
-    
-    ВОЗВРАЩАЕТ:
-        list[str] - список имен таблиц, например: ['orders', 'dishes', 'restaurants']
-        
-    ПРИМЕР ИСПОЛЬЗОВАНИЯ:
-        tables = list_tables()
-        if 'users' in tables:
-            print("Таблица users существует")
-    """
-    # Context manager автоматически закрывает соединение и курсор
-    # Даже при возникновении исключения
+
     with get_db_conn() as conn, conn.cursor() as cur:
         cur.execute(
             """
@@ -273,110 +68,37 @@ def list_tables():
             ORDER BY table_name
             """
         )
-        # List comprehension: [r[0] for r in cur.fetchall()]
-        # cur.fetchall() возвращает список кортежей: [('orders',), ('dishes',), ...]
-        # r[0] извлекает первый элемент каждого кортежа (имя таблицы)
-        # Результат: ['orders', 'dishes', ...]
         return [r[0] for r in cur.fetchall()]
 
 
-# ============================================================================
-# СИСТЕМА БЕЗОПАСНОСТИ: ВАЛИДАЦИЯ SQL ИДЕНТИФИКАТОРОВ
-# ============================================================================
-# 
-# ПРОБЛЕМА SQL INJECTION:
-# -----------------------
-# Если пользователь может вводить имена таблиц/колонок напрямую в SQL, 
-# возможна атака типа: table_name = "users; DROP TABLE orders; --"
-# 
-# РЕШЕНИЕ - WHITELIST ПОДХОД:
-# ---------------------------
-# 1. Проверка формата имени (только допустимые символы)
-# 2. Проверка существования в БД (whitelist из реальных таблиц)
-# 3. Никогда не используем пользовательский ввод напрямую в SQL
-#
-# ПРЕИМУЩЕСТВА:
-# - Защита от SQL injection через имена таблиц/колонок
-# - Защита от опечаток (пользователь не может указать несуществующую таблицу)
-# - Явный контроль доступа (можно ограничить список доступных таблиц)
-
 def validate_table_name(table_name: str) -> tuple[bool, str]:
-    """
-    Валидирует имя таблицы перед использованием в SQL запросах.
-    
-    МНОГОУРОВНЕВАЯ ПРОВЕРКА:
-    1. Проверка типа и наличия значения
-    2. Проверка формата (regex - только буквы, цифры, подчеркивания)
-    3. Проверка существования в БД (whitelist подход)
-    
-    АРГУМЕНТЫ:
-        table_name: str - имя таблицы для проверки
-        
-    ВОЗВРАЩАЕТ:
-        tuple[bool, str]:
-            - bool: True если валидно, False если нет
-            - str: сообщение об ошибке (пустая строка если валидно)
-    
-    ПРАВИЛА ВАЛИДАЦИИ:
-    - Имя должно начинаться с буквы или подчеркивания
-    - Может содержать только буквы, цифры и подчеркивания
-    - Должно существовать в базе данных (проверка через information_schema)
-    
-    ЗАЩИТА ОТ АТАК:
-    - SQL injection: "users; DROP TABLE orders; --" - заблокировано (недопустимые символы)
-    - Path traversal: "../../etc/passwd" - заблокировано (недопустимые символы)
-    - Несуществующие таблицы: "hacked_table" - заблокировано (нет в whitelist)
-    
-    ПРИМЕРЫ:
-        validate_table_name("orders") -> (True, "")
-        validate_table_name("users; DROP") -> (False, "Недопустимое имя таблицы")
-        validate_table_name("nonexistent") -> (False, "Таблица не найдена")
-    """
-    # Проверка 1: Тип и наличие значения
-    # isinstance() проверяет тип объекта
-    # Это защищает от передачи None, числа, списка и т.д.
+
     if not table_name or not isinstance(table_name, str):
         return False, "Имя таблицы не может быть пустым"
-    
-    # Проверка 2: Формат имени через регулярное выражение
-    # r'^[a-zA-Z_][a-zA-Z0-9_]*$' - паттерн:
-    #   ^ - начало строки
-    #   [a-zA-Z_] - первый символ: буква (любого регистра) или подчеркивание
-    #   [a-zA-Z0-9_]* - следующие символы: буквы, цифры, подчеркивания (0 или более)
-    #   $ - конец строки
-    # Это стандартное правило именования идентификаторов в SQL
+
     if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table_name):
         return False, f"Недопустимое имя таблицы: {table_name}"
-    
-    # Проверка 3: Существование в базе данных (WHITELIST)
-    # Получаем список всех реальных таблиц из БД
-    # Это гарантирует, что пользователь не может указать несуществующую таблицу
-    # или таблицу, к которой у него нет доступа
+
     valid_tables = list_tables()
     if table_name not in valid_tables:
         return False, f"Таблица {table_name} не найдена в базе данных"
     
-    # Все проверки пройдены
     return True, ""
 
 
 def validate_column_names(column_names: list[str], table_name: str) -> tuple[bool, str]:
-    """Валидирует список имен колонок для указанной таблицы"""
     if not column_names:
         return False, "Список колонок не может быть пустым"
     
-    # Сначала валидируем имя таблицы
     is_valid, error = validate_table_name(table_name)
     if not is_valid:
         return False, error
     
-    # Получаем валидные колонки для таблицы
     try:
         valid_columns = [col["column_name"] for col in list_columns(table_name)]
     except Exception:
         return False, f"Не удалось получить список колонок для таблицы {table_name}"
     
-    # Проверяем каждую колонку
     for col in column_names:
         if not isinstance(col, str):
             return False, f"Имя колонки должно быть строкой: {col}"
@@ -389,24 +111,17 @@ def validate_column_names(column_names: list[str], table_name: str) -> tuple[boo
 
 
 def validate_username_input(username: str) -> tuple[bool, str]:
-    """
-    Валидирует username перед использованием в SQL запросе
-    Дополнительная защита на уровне приложения
-    """
     if not username or not isinstance(username, str):
         return False, "Username не может быть пустым"
     
-    # Проверка длины
     if len(username) > 100:
         return False, "Username слишком длинный (максимум 100 символов)"
     
-    # Проверка на опасные символы
     dangerous_chars = ["'", '"', ';', '--', '/*', '*/', '\\', '\x00']
     for char in dangerous_chars:
         if char in username:
             return False, f"Username содержит недопустимый символ"
     
-    # Проверка через guard систему (симулируем SQL запрос)
     test_sql = f"SELECT * FROM app_users WHERE username='{username}'"
     result = validate_sql(test_sql)
     
@@ -418,33 +133,24 @@ def validate_username_input(username: str) -> tuple[bool, str]:
 
 
 def validate_where_clause(where_clause: str) -> tuple[bool, str]:
-    """Валидирует WHERE условие на наличие SQL injection"""
     if not where_clause or not where_clause.strip():
         return True, ""  # Пустое условие допустимо
     
     where_lower = where_clause.lower().strip()
-    
-    # Дополнительные проверки на опасные конструкции
-    # Блокируем подзапросы (SELECT в WHERE)
     if re.search(r'\bselect\b.*?\bfrom\b', where_lower, re.IGNORECASE):
         return False, "Подзапросы в WHERE условии запрещены"
     
-    # Блокируем вызовы функций, которые могут быть опасными
     dangerous_functions = ['pg_sleep', 'sleep', 'exec', 'execute', 'xp_cmdshell', 'load_file']
     for func in dangerous_functions:
         if re.search(rf'\b{re.escape(func)}\s*\(', where_lower):
             return False, f"Вызов функции {func} запрещен в WHERE условии"
     
-    # Блокируем UNION
     if 'union' in where_lower:
         return False, "UNION в WHERE условии запрещен"
     
-    # Блокируем множественные запросы
     if ';' in where_clause:
         return False, "Множественные запросы в WHERE условии запрещены"
-    
-    # Проверяем через guard систему
-    # Создаем тестовый запрос для проверки
+
     test_sql = f"SELECT * FROM test_table WHERE {where_clause}"
     result = validate_sql(test_sql)
     
@@ -456,7 +162,6 @@ def validate_where_clause(where_clause: str) -> tuple[bool, str]:
 
 
 def list_columns(table: str):
-    # Валидация имени таблицы для дополнительной безопасности
     is_valid, error = validate_table_name(table)
     if not is_valid:
         raise ValueError(error)
@@ -581,7 +286,6 @@ def list_stocks(restaurant_id: int | None = None) -> list[dict]:
         cur.execute(sql, params)
         rows = cur.fetchall()
 
-    # Форматируем expiry_date в 'YYYY-MM-DD'
     result = []
     for row in rows:
         new_row = {}
@@ -733,7 +437,6 @@ def login():
             flash("Заполните username и password", "danger")
             return render_template("login.html")
         
-        # Дополнительная валидация username для защиты от SQL injection
         is_valid, error = validate_username_input(username)
         if not is_valid:
             # Логируем попытку атаки (можно добавить логирование)
@@ -742,7 +445,6 @@ def login():
         
         try:
             with get_db_conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
-                # Параметризованный запрос - безопасен от SQL injection
                 cur.execute("SELECT id, username, password_hash FROM app_users WHERE username=%s", (username,))
                 user = cur.fetchone()
                 if not user:
@@ -785,9 +487,6 @@ def login():
     return render_template("login.html")
 
 
-# Регистрация через GUI удалена - только админ может создавать пользователей через /action/users/create
-
-
 @app.route("/logout")
 def logout():
     session.clear()
@@ -800,7 +499,6 @@ GOOGLE_SHEETS_CONFIG = {
 
 def export_all_safe_tables_to_google_sheets():
     try:
-        # Список таблиц с чувствительными данными — их НЕ выгружаем
         SENSITIVE_TABLES = {
             'app_users',
             'app_roles',
@@ -820,7 +518,6 @@ def export_all_safe_tables_to_google_sheets():
         spreadsheet = client.open(GOOGLE_SHEETS_CONFIG["spreadsheet_title"])
 
 
-        # Получаем список ВСЕХ таблиц
         with get_db_conn() as conn, conn.cursor() as cur:
             cur.execute("""
                         SELECT table_name
@@ -831,23 +528,17 @@ def export_all_safe_tables_to_google_sheets():
                         """)
             all_tables = {row[0] for row in cur.fetchall()}
 
-        # Фильтруем: только безопасные таблицы
         safe_tables = sorted(all_tables - SENSITIVE_TABLES)
 
         if not safe_tables:
             return False, "Нет безопасных таблиц для выгрузки"
 
-        # Выгружаем каждую таблицу
         for table_name in safe_tables:
             try:
-                # Пытаемся получить существующий лист
                 worksheet = spreadsheet.worksheet(table_name)
             except gspread.exceptions.WorksheetNotFound:
-                # Если нет — создаём
                 worksheet = spreadsheet.add_worksheet(title=table_name, rows="1000", cols="26")
 
-            # Получаем данные (с ограничением для безопасности)
-            # Валидация имени таблицы
             is_valid, error = validate_table_name(table_name)
             if not is_valid:
                 raise ValueError(error)
@@ -857,11 +548,9 @@ def export_all_safe_tables_to_google_sheets():
                 rows = cur.fetchall()
 
             if rows:
-                # Заголовки + данные
                 headers = list(rows[0].keys())
                 data = [headers]
                 for row in rows:
-                    # Преобразуем всё в строки, None → пусто
                     data.append([str(v) if v is not None else "" for v in row.values()])
 
                 worksheet.clear()
@@ -925,14 +614,12 @@ def dashboard():
             data["tables"] = list_tables()
             form = data["tables_form"]
             if form and form.get("table"):
-                # Валидация имени таблицы из сессии (на случай подделки)
                 table_name = form["table"]
                 is_valid, error = validate_table_name(table_name)
                 if is_valid:
                     form["columns"] = list_columns(table_name)
                     session["tables_form"] = form
                 else:
-                    # Удаляем невалидную форму из сессии
                     session.pop("tables_form", None)
             default_rest = data["restaurants"][0]["id"] if data["restaurants"] else None
             if not data["stocks_last"] and default_rest:
@@ -960,34 +647,26 @@ def dashboard():
 
 
 def fetch_table(table: str, where: str | None, limit: int):
-    # Валидация имени таблицы
     is_valid, error = validate_table_name(table)
     if not is_valid:
         raise ValueError(error)
     
-    # Валидация WHERE условия
     if where:
         is_valid, error = validate_where_clause(where)
         if not is_valid:
             raise ValueError(error)
-        # Дополнительная проверка: убеждаемся, что WHERE не содержит опасных символов после валидации
-        # Экранируем одинарные кавычки для безопасности (хотя они должны быть в параметрах)
         if where.count("'") > 10 or where.count('"') > 10:
             raise ValueError("WHERE условие содержит слишком много кавычек")
     
-    # Ограничиваем лимит для безопасности
-    limit = min(max(1, limit), 5000)  # Минимум 1, максимум 5000
+    limit = min(max(1, limit), 5000)
     
-    # Строим SQL с валидированным WHERE
     sql = f"SELECT * FROM public.{table}"
     params = []
     if where:
-        # WHERE уже проверен, но все равно используем осторожно
         sql += f" WHERE {where}"
     sql += " ORDER BY 1 LIMIT %s"
     params.append(limit)
     
-    # Финальная проверка через guard систему всего запроса
     final_result = validate_sql(sql)
     if not final_result["allowed"]:
         reason = final_result.get("reason", final_result.get("risk_score", "Неизвестная причина"))
@@ -1048,7 +727,6 @@ def action_tables_insert():
         cols = list(data.keys())
         vals = list(data.values())
         
-        # Валидация имен колонок
         is_valid, error = validate_column_names(cols, table)
         if not is_valid:
             raise ValueError(error)
@@ -1083,7 +761,6 @@ def action_tables_new_form():
         flash("Укажите таблицу", "warning")
         return redirect(url_for("dashboard") + "#tab-tables")
     try:
-        # Валидация имени таблицы
         is_valid, error = validate_table_name(table)
         if not is_valid:
             raise ValueError(error)
@@ -1113,7 +790,6 @@ def action_users_create():
         flash("Пароли не совпадают", "warning")
         return redirect(url_for("dashboard") + "#tab-users")
     
-    # Валидация username для защиты от SQL injection
     is_valid, error = validate_username_input(username)
     if not is_valid:
         flash(f"Недопустимый формат username: {error}", "danger")
@@ -1153,7 +829,6 @@ def action_query_run():
         flash("Запрос пустой", "warning")
         return redirect(url_for("dashboard") + "#tab-query")
 
-    # === SQL GUARD (Rule-based + ML) ===
     guard_result = validate_sql(sql)
     if not guard_result["allowed"]:
         if guard_result.get("layer") == "rule_based":
@@ -1167,7 +842,6 @@ def action_query_run():
                 "danger"
             )
         return redirect(url_for("dashboard") + "#tab-query")
-    # ==================================
 
     try:
         with get_db_conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -1238,10 +912,8 @@ def action_inventory_update():
         if not sets:
             flash("Нет данных для обновления", "info")
             return redirect(url_for("dashboard") + "#tab-inv")
-        # Валидация SET частей - проверяем, что это только безопасные колонки
         valid_update_columns = {'qty', 'expiry_date', 'min_threshold', 'active', 'batch_no'}
         for set_part in sets:
-            # Извлекаем имя колонки из SET части (например, "qty = %s" -> "qty")
             col_match = re.match(r'^(\w+)\s*=', set_part)
             if not col_match:
                 raise ValueError(f"Недопустимый формат SET: {set_part}")
@@ -1249,11 +921,8 @@ def action_inventory_update():
             if col_name not in valid_update_columns:
                 raise ValueError(f"Колонка {col_name} не может быть обновлена через этот эндпоинт")
         
-        # Строим UPDATE запрос для финальной проверки
         update_sql_template = f"UPDATE ingredient_batches SET {', '.join(sets)} WHERE id = %s"
         
-        # Финальная проверка через guard систему (проверяем шаблон)
-        # Заменяем %s на пример значения для проверки
         test_sql = update_sql_template.replace('%s', '1')
         final_result = validate_sql(test_sql)
         if not final_result["allowed"]:
@@ -1262,7 +931,6 @@ def action_inventory_update():
         
         with get_db_conn() as conn, conn.cursor() as cur:
             for sid in stock_ids:
-                # Валидация ID
                 if not str(sid).isdigit():
                     raise ValueError(f"Недопустимый ID: {sid}")
                 cur.execute(update_sql_template, [*params, int(sid)])
@@ -1564,6 +1232,5 @@ def report_top_dishes_csv():
     )
 
 if __name__ == "__main__":
-    # Для Docker используем 0.0.0.0, для локальной разработки можно использовать localhost
     debug_mode = os.environ.get("FLASK_DEBUG", "False").lower() == "true"
     app.run(debug=debug_mode, host="0.0.0.0", port=8000)

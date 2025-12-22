@@ -1,12 +1,7 @@
-#!/usr/bin/env python3
-"""
-Скрипт для тестирования guard системы на запросах из requests.txt
-"""
 import re
 from app.security.sql_guard import validate_sql
 
 def extract_sql_queries(file_path: str) -> list[tuple[str, str]]:
-    """Извлекает SQL запросы из файла requests.txt"""
     queries = []
     with open(file_path, 'r', encoding='utf-8') as f:
         lines = f.readlines()
@@ -17,36 +12,27 @@ def extract_sql_queries(file_path: str) -> list[tuple[str, str]]:
     for line in lines:
         line_stripped = line.strip()
         
-        # Пропускаем пустые строки
         if not line_stripped:
             continue
         
-        # Проверяем, является ли строка описанием (начинается с цифры и точки/скобки)
         if re.match(r'^\d+[\.\)]\s', line_stripped):
-            # Сохраняем предыдущий запрос, если есть
             if current_sql:
                 queries.append((current_description, current_sql.strip()))
                 current_sql = ""
             
-            # Извлекаем описание
             current_description = re.sub(r'^\d+[\.\)]\s*', '', line_stripped)
             continue
         
-        # Если это SQL запрос (начинается с ключевого слова)
         if re.match(r'^\s*(SELECT|WITH|EXPLAIN|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE)', line_stripped, re.IGNORECASE):
             current_sql = line_stripped
         elif current_sql:
-            # Продолжение SQL запроса (в новом формате запросы в одну строку, но на всякий случай)
             current_sql += " " + line_stripped
     
-    # Сохраняем последний запрос
     if current_sql:
         queries.append((current_description, current_sql.strip()))
     
-    # Разделяем множественные запросы в одном блоке
     final_queries = []
     for desc, sql in queries:
-        # Разделяем по точкам с запятой, но учитываем, что они могут быть в строках
         parts = []
         current_part = []
         in_string = False
@@ -69,13 +55,11 @@ def extract_sql_queries(file_path: str) -> list[tuple[str, str]]:
                     parts.append(part)
                 current_part = []
         
-        # Добавляем последнюю часть
         if current_part:
             part = ''.join(current_part).strip()
             if part:
                 parts.append(part)
         
-        # Если запросов несколько, добавляем каждый отдельно
         if len(parts) > 1:
             for i, part in enumerate(parts):
                 final_queries.append((f"{desc} (запрос {i+1})", part))
@@ -123,7 +107,6 @@ def test_queries(queries: list[tuple[str, str]]):
         print("-" * 80)
         print()
     
-    # Итоговая статистика
     print("=" * 80)
     print("ИТОГОВАЯ СТАТИСТИКА")
     print("=" * 80)
@@ -133,7 +116,6 @@ def test_queries(queries: list[tuple[str, str]]):
     print(f"⚠️  Ошибок: {len(results['errors'])}")
     print()
     
-    # Детали по заблокированным
     if results['blocked']:
         print("ЗАБЛОКИРОВАННЫЕ ЗАПРОСЫ:")
         print("-" * 80)
@@ -145,7 +127,6 @@ def test_queries(queries: list[tuple[str, str]]):
             print(f"    SQL: {sql[:80]}...")
             print()
     
-    # Детали по ошибкам
     if results['errors']:
         print("ОШИБКИ:")
         print("-" * 80)
@@ -158,7 +139,6 @@ def test_queries(queries: list[tuple[str, str]]):
     return results
 
 def get_malicious_test_queries() -> list[tuple[str, str]]:
-    """Возвращает набор вредоносных запросов для тестирования защиты"""
     return [
         # UNION-based injection
         ("UNION SELECT injection", "SELECT * FROM users WHERE id = 1 UNION SELECT * FROM passwords"),
@@ -206,20 +186,17 @@ def get_malicious_test_queries() -> list[tuple[str, str]]:
 if __name__ == '__main__':
     import sys
     
-    # Проверяем аргументы командной строки
     test_malicious = '--malicious' in sys.argv or '-m' in sys.argv
     test_requests = '--requests' in sys.argv or '-r' in sys.argv or len(sys.argv) == 1
     
     all_queries = []
     
-    # Тестируем запросы из requests.txt
     if test_requests:
         queries = extract_sql_queries('requests.txt')
         print(f"Найдено {len(queries)} SQL запросов из requests.txt")
         all_queries.extend(queries)
         print()
     
-    # Тестируем вредоносные запросы
     if test_malicious:
         malicious = get_malicious_test_queries()
         print(f"Добавлено {len(malicious)} вредоносных запросов для тестирования")
@@ -233,6 +210,5 @@ if __name__ == '__main__':
         print("  python test_guard.py --requests --malicious  # Тестировать все")
         sys.exit(1)
     
-    # Тестируем
     results = test_queries(all_queries)
 
