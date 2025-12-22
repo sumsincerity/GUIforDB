@@ -14,6 +14,32 @@ services:
       - ./init/02_test_data.sql:/docker-entrypoint-initdb.d/02_test_data.sql
       - ./restaurants_secret.json:/app/restaurants_secret.json.json:ro
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U restaurant_admin -d restaurant_management"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build: .
+    container_name: restaurant_web
+    ports:
+      - "8000:8000"
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: restaurant_management
+      DB_USER: restaurant_admin
+      DB_PASSWORD: secure_password_123
+      SECRET_KEY: ${SECRET_KEY:-dev_secret_change_me_in_production}
+    volumes:
+      - .:/app
+      - ./restaurants_secret.json:/app/restaurants_secret.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    command: python web_app.py
 
 volumes:
   postgres_data:
