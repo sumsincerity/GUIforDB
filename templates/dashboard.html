@@ -243,11 +243,16 @@
       <form method="post" action="{{ url_for('action_inventory_load') }}" class="row g-2 align-items-end mb-3">
         <div class="col-md-3">
           <label class="form-label">Ресторан</label>
+            {% if "admin" in perms %}
           <select class="form-select" name="rest_id">
             {% for r in restaurants %}
             <option value="{{ r.id }}">{{ r.id }} - {{ r.name }}</option>
             {% endfor %}
           </select>
+            {% else %}
+            <input type="hidden" name="rest_id" value="{{ current_restaurant }}">
+            <div class="form-control" disabled>{{ current_restaurant_name }}</div>
+            {% endif %}
         </div>
         <div class="col-md-2">
           <button class="btn btn-primary w-100">Обновить</button>
@@ -359,10 +364,15 @@
       <form method="post" action="{{ url_for('action_orders_load') }}" class="row g-2 align-items-end">
         <div class="col-md-3">
           <label class="form-label">Ресторан</label>
+            {% if "admin" in perms %}
           <select class="form-select" name="rest_id">
             <option value="">Любой</option>
             {% for r in restaurants %}<option value="{{ r.id }}">{{ r.id }} - {{ r.name }}</option>{% endfor %}
           </select>
+            {% else %}
+            <input type="hidden" name="rest_id" value="{{ current_restaurant }}">
+            <div class="form-control" disabled>{{ current_restaurant_name }}</div>
+            {% endif %}
         </div>
         <div class="col-md-2">
           <label class="form-label">Статус</label>
@@ -399,9 +409,14 @@
       </div>
       <form method="post" action="{{ url_for('action_orders_create') }}" class="row g-2">
         <div class="col-md-2">
+            {% if "admin" in perms %}
           <select class="form-select" name="rest_id">
             {% for r in restaurants %}<option value="{{ r.id }}">{{ r.id }} - {{ r.name }}</option>{% endfor %}
           </select>
+            {% else %}
+            <input type="hidden" name="rest_id" value="{{ current_restaurant }}">
+            <div class="form-control" disabled>{{ current_restaurant_name }}</div>
+            {% endif %}
         </div>
         <div class="col-md-2"><input class="form-control" name="table" placeholder="Стол"></div>
         <div class="col-md-2"><input class="form-control" name="guest" placeholder="Гость"></div>
@@ -500,7 +515,7 @@
                 📥 Скачать Топ-блюд (CSV)
             </a>
             </a>
-            {% if "admin" in perms %}
+            {% if "admin" in perms or "analyst" == role %}
             <a href="{{ url_for('action_export_all_safe_tables') }}"
                class="btn btn-warning btn-sm"
                onclick="return confirm('Выгрузить ВСЕ безопасные таблицы? Это может занять 1-2 минуты.')">

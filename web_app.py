@@ -17,7 +17,7 @@ ROLE_PERMISSIONS = {
     "admin": {"admin", "tables", "query", "inventory", "orders", "menu", "reports", "purchase"},
     "analyst": {"tables", "query", "menu", "reports"},
     "manager": {"tables", "inventory", "orders", "menu", "reports", "purchase"},
-    "cook": {"inventory", "orders", "menu", "purchase"},
+    "cook": {"inventory", "menu", "purchase"},
     "waiter": {"orders", "menu"},
 }
 
@@ -511,8 +511,8 @@ def export_all_safe_tables_to_google_sheets():
 @app.route("/action/reports/export_all_safe_tables")
 @login_required
 def action_export_all_safe_tables():
-    if not has_perm("admin"):  # Только админ!
-        flash("Только админ может выгружать все таблицы", "danger")
+    if not has_perm("admin", "analyst"):  # Только админ!
+        flash("Только админ и аналитик может выгружать все таблицы", "danger")
         return redirect(url_for("dashboard") + "#tab-reports")
 
     success, msg = export_all_safe_tables_to_google_sheets()
@@ -537,6 +537,17 @@ def dashboard():
         "summary": [],
         "status_counts": [],
     }
+    current_rest_id = user.get("restaurant_id")
+    current_rest_name = None
+    if current_rest_id:
+        with get_db_conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT name FROM restaurants WHERE id = %s", (current_rest_id,))
+            row = cur.fetchone()
+            current_rest_name = row["name"] if row else "—"
+    else:
+        current_rest_name = "Не назначен"
+
+    data["current_restaurant_name"] = current_rest_name
     try:
         with get_db_conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SELECT id, name FROM restaurants ORDER BY id")

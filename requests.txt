@@ -235,22 +235,6 @@ SELECT id, restaurant_id, name
 FROM dishes
 ORDER BY id;
 
-Создаём админа
-INSERT INTO app_users (username, password_hash)
-VALUES (
-    'superadmin',
-    '$2b$12$ваш_хеш_здесь'
-);
-
--- Привязываем роль admin (без ресторана)
-INSERT INTO app_user_roles (user_id, role_id, restaurant_id)
-SELECT
-    (SELECT id FROM app_users WHERE username = 'superadmin'),
-    (SELECT id FROM app_roles WHERE name = 'admin'),
-    NULL;
-# Зайдите в контейнер с PostgreSQL
-docker compose exec postgres psql -U restaurant_admin restaurant_management
-
 Проверка автозаявки
 -- 1. Установите порог
 UPDATE ingredient_batches SET min_threshold = 100 WHERE ingredient_id = 5 AND restaurant_id = 1;
