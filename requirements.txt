@@ -1,5 +1,5 @@
 Flask==3.0.3
-psycopg2-binary==2.9.9
+psycopg2-binary==2.9.9 # python 3.13 - psycopg2-binary==>2.9.10 для wheel
 python-dotenv==1.0.1
 bcrypt==4.2.0
 pandas==2.2.3

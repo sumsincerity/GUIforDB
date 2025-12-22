@@ -1,281 +1,68 @@
 1. Какие блюда наиболее популярны в каждом заведении?
-SELECT
-    r.name AS restaurant,
-    d.name AS dish,
-    SUM(oi.qty) AS total_ordered
-FROM order_items oi
-JOIN dishes d ON oi.dish_id = d.id
-JOIN restaurants r ON d.restaurant_id = r.id
-JOIN orders o ON oi.order_id = o.id
-WHERE o.status IN ('completed', 'served')
-GROUP BY r.name, d.name
-ORDER BY r.name, total_ordered DESC;
+SELECT r.name AS restaurant, d.name AS dish, SUM(oi.qty) AS total_ordered FROM order_items oi JOIN dishes d ON oi.dish_id = d.id JOIN restaurants r ON d.restaurant_id = r.id JOIN orders o ON oi.order_id = o.id WHERE o.status IN ('completed', 'served') GROUP BY r.name, d.name ORDER BY r.name, total_ordered DESC;
 
 2. Какие блюда не были заказаны ни разу?
-SELECT
-    r.name AS restaurant,
-    d.name AS dish
-FROM dishes d
-JOIN restaurants r ON d.restaurant_id = r.id
-LEFT JOIN order_items oi ON d.id = oi.dish_id
-WHERE oi.dish_id IS NULL
-ORDER BY r.name, d.name;
+SELECT r.name AS restaurant, d.name AS dish FROM dishes d JOIN restaurants r ON d.restaurant_id = r.id LEFT JOIN order_items oi ON d.id = oi.dish_id WHERE oi.dish_id IS NULL ORDER BY r.name, d.name;
 
 3. Какие блюда недоступны в текущий момент?
-SELECT
-    r.name AS restaurant,
-    d.name AS dish
-FROM dishes d
-JOIN restaurants r ON d.restaurant_id = r.id
-WHERE d.is_available = FALSE
-ORDER BY r.name, d.name;
+SELECT r.name AS restaurant, d.name AS dish FROM dishes d JOIN restaurants r ON d.restaurant_id = r.id WHERE d.is_available = FALSE ORDER BY r.name, d.name;
 
-4.Какие временные слоты самые загруженные для каждого заведения?
-SELECT
-    r.name AS restaurant,
-    EXTRACT(HOUR FROM o.order_time) AS hour_of_day,
-    COUNT(*) AS order_count
-FROM orders o
-JOIN restaurants r ON o.restaurant_id = r.id
-WHERE o.status IN ('completed', 'served')
-GROUP BY r.name, hour_of_day
-ORDER BY r.name, order_count DESC;
+4. Какие временные слоты самые загруженные для каждого заведения?
+SELECT r.name AS restaurant, EXTRACT(HOUR FROM o.order_time) AS hour_of_day, COUNT(*) AS order_count FROM orders o JOIN restaurants r ON o.restaurant_id = r.id WHERE o.status IN ('completed', 'served') GROUP BY r.name, hour_of_day ORDER BY r.name, order_count DESC;
 
 5. Какие заведения самые загруженные с 18:00 до 21:00?
-SELECT
-    r.name AS restaurant,
-    COUNT(*) AS order_count
-FROM orders o
-JOIN restaurants r ON o.restaurant_id = r.id
-WHERE o.status IN ('completed', 'served')
-  AND EXTRACT(HOUR FROM o.order_time) BETWEEN 18 AND 20
-GROUP BY r.name
-ORDER BY order_count DESC;
+SELECT r.name AS restaurant, COUNT(*) AS order_count FROM orders o JOIN restaurants r ON o.restaurant_id = r.id WHERE o.status IN ('completed', 'served') AND EXTRACT(HOUR FROM o.order_time) BETWEEN 18 AND 20 GROUP BY r.name ORDER BY order_count DESC;
 
 6. Сколько заказов обработал каждый сотрудник?
-SELECT
-    e.full_name AS employee,
-    COUNT(DISTINCT o.id) AS orders_handled
-FROM orders o
-JOIN app_users au ON o.created_by_user = au.id
-JOIN employees e ON au.employee_id = e.id
-WHERE o.status IN ('completed', 'served')
-GROUP BY e.full_name
-ORDER BY orders_handled DESC;
+SELECT e.full_name AS employee, COUNT(DISTINCT o.id) AS orders_handled FROM orders o JOIN app_users au ON o.created_by_user = au.id JOIN employees e ON au.employee_id = e.id WHERE o.status IN ('completed', 'served') GROUP BY e.full_name ORDER BY orders_handled DESC;
 
 7. Какую прибыль принёс каждый сотрудник?
-SELECT
-    e.full_name AS employee,
-    COALESCE(SUM(o.total_amount), 0) AS total_revenue
-FROM orders o
-JOIN app_users au ON o.created_by_user = au.id
-JOIN employees e ON au.employee_id = e.id
-WHERE o.status IN ('completed', 'served')
-GROUP BY e.full_name
-ORDER BY total_revenue DESC;
+SELECT e.full_name AS employee, COALESCE(SUM(o.total_amount), 0) AS total_revenue FROM orders o JOIN app_users au ON o.created_by_user = au.id JOIN employees e ON au.employee_id = e.id WHERE o.status IN ('completed', 'served') GROUP BY e.full_name ORDER BY total_revenue DESC;
 
 8. Какие ингредиенты используются чаще всего?
-SELECT
-    i.name AS ingredient,
-    SUM(di.qty_required * oi.qty) AS total_used
-FROM order_items oi
-JOIN dishes d ON oi.dish_id = d.id
-JOIN dish_ingredients di ON d.id = di.dish_id
-JOIN ingredients i ON di.ingredient_id = i.id
-JOIN orders o ON oi.order_id = o.id
-WHERE o.status IN ('completed', 'served')
-GROUP BY i.name
-ORDER BY total_used DESC;
+SELECT i.name AS ingredient, SUM(di.qty_required * oi.qty) AS total_used FROM order_items oi JOIN dishes d ON oi.dish_id = d.id JOIN dish_ingredients di ON d.id = di.dish_id JOIN ingredients i ON di.ingredient_id = i.id JOIN orders o ON oi.order_id = o.id WHERE o.status IN ('completed', 'served') GROUP BY i.name ORDER BY total_used DESC;
 
 9. В какое время дня заказывают больше всего блюд?
-SELECT
-    EXTRACT(HOUR FROM o.order_time) AS hour_of_day,
-    SUM(oi.qty) AS total_dishes
-FROM orders o
-JOIN order_items oi ON o.id = oi.order_id
-WHERE o.status IN ('completed', 'served')
-GROUP BY hour_of_day
-ORDER BY total_dishes DESC
-LIMIT 1;
+SELECT EXTRACT(HOUR FROM o.order_time) AS hour_of_day, SUM(oi.qty) AS total_dishes FROM orders o JOIN order_items oi ON o.id = oi.order_id WHERE o.status IN ('completed', 'served') GROUP BY hour_of_day ORDER BY total_dishes DESC LIMIT 1;
 
 10. Какие блюда можно предложить в качестве альтернативы недоступным?
-SELECT
-    d_unavail.name AS unavailable_dish,
-    r.name AS restaurant,
-    alt.name AS alternative_dish
-FROM dishes d_unavail
-JOIN restaurants r ON d_unavail.restaurant_id = r.id
-JOIN LATERAL (
-    SELECT * FROM fn_suggest_alternatives(d_unavail.id, r.id, 3)
-) alt ON true
-WHERE d_unavail.is_available = FALSE;
-
+SELECT d_unavail.name AS unavailable_dish, r.name AS restaurant, alt.name AS alternative_dish FROM dishes d_unavail JOIN restaurants r ON d_unavail.restaurant_id = r.id JOIN LATERAL (SELECT * FROM fn_suggest_alternatives(d_unavail.id, r.id, 3)) alt ON true WHERE d_unavail.is_available = FALSE;
 
 11. Какие данные можно использовать для прогнозирования спроса?
--- Данные для прогнозирования спроса: суточный спрос на блюда
-SELECT
-    d.name AS dish_name,
-    r.name AS restaurant_name,
-    d.category,
-    DATE(o.order_time) AS order_date,
-    SUM(oi.qty) AS daily_quantity,
-    COUNT(DISTINCT o.id) AS daily_orders
-FROM orders o
-JOIN order_items oi ON o.id = oi.order_id
-JOIN dishes d ON oi.dish_id = d.id
-JOIN restaurants r ON d.restaurant_id = r.id
-WHERE o.status IN ('completed', 'served')
-  AND o.order_time >= now() - INTERVAL '90 days'  -- за последние 90 дней
-GROUP BY d.name, r.name, d.category, DATE(o.order_time)
-ORDER BY r.name, d.name, order_date;
+SELECT d.name AS dish_name, r.name AS restaurant_name, d.category, DATE(o.order_time) AS order_date, SUM(oi.qty) AS daily_quantity, COUNT(DISTINCT o.id) AS daily_orders FROM orders o JOIN order_items oi ON o.id = oi.order_id JOIN dishes d ON oi.dish_id = d.id JOIN restaurants r ON d.restaurant_id = r.id WHERE o.status IN ('completed', 'served') AND o.order_time >= now() - INTERVAL '90 days' GROUP BY d.name, r.name, d.category, DATE(o.order_time) ORDER BY r.name, d.name, order_date;
 
--- Средний спрос по дням недели
-SELECT
-    d.name AS dish_name,
-    EXTRACT(DOW FROM o.order_time) AS day_of_week,  -- 0=вс, 1=пн, ...
-    AVG(oi.qty) AS avg_qty_per_order,
-    SUM(oi.qty) AS total_qty,
-    COUNT(*) AS total_orders
-FROM orders o
-JOIN order_items oi ON o.id = oi.order_id
-JOIN dishes d ON oi.dish_id = d.id
-WHERE o.status IN ('completed', 'served')
-GROUP BY d.name, day_of_week
-ORDER BY d.name, day_of_week;
+12. Средний спрос по дням недели
+SELECT d.name AS dish_name, EXTRACT(DOW FROM o.order_time) AS day_of_week, AVG(oi.qty) AS avg_qty_per_order, SUM(oi.qty) AS total_qty, COUNT(*) AS total_orders FROM orders o JOIN order_items oi ON o.id = oi.order_id JOIN dishes d ON oi.dish_id = d.id WHERE o.status IN ('completed', 'served') GROUP BY d.name, day_of_week ORDER BY d.name, day_of_week;
 
-12. Какие категории блюд приносят наибольшую прибыль в каждом заведении?
-SELECT
-    r.name AS restaurant,
-    d.category,
-    SUM(oi.qty * oi.price_at_order) AS category_revenue
-FROM order_items oi
-JOIN dishes d ON oi.dish_id = d.id
-JOIN restaurants r ON d.restaurant_id = r.id
-JOIN orders o ON oi.order_id = o.id
-WHERE o.status IN ('completed', 'served')
-GROUP BY r.name, d.category
-ORDER BY r.name, category_revenue DESC;
+13. Какие категории блюд приносят наибольшую прибыль в каждом заведении?
+SELECT r.name AS restaurant, d.category, SUM(oi.qty * oi.price_at_order) AS category_revenue FROM order_items oi JOIN dishes d ON oi.dish_id = d.id JOIN restaurants r ON d.restaurant_id = r.id JOIN orders o ON oi.order_id = o.id WHERE o.status IN ('completed', 'served') GROUP BY r.name, d.category ORDER BY r.name, category_revenue DESC;
 
-13. Какие блюда самые прибыльные?
-SELECT
-    r.name AS restaurant,
-    d.name AS dish,
-    SUM(oi.qty * oi.price_at_order) AS total_revenue
-FROM order_items oi
-JOIN dishes d ON oi.dish_id = d.id
-JOIN restaurants r ON d.restaurant_id = r.id
-JOIN orders o ON oi.order_id = o.id
-WHERE o.status IN ('completed', 'served')
-GROUP BY r.name, d.name
-ORDER BY total_revenue DESC
-LIMIT 10;
+14. Какие блюда самые прибыльные?
+SELECT r.name AS restaurant, d.name AS dish, SUM(oi.qty * oi.price_at_order) AS total_revenue FROM order_items oi JOIN dishes d ON oi.dish_id = d.id JOIN restaurants r ON d.restaurant_id = r.id JOIN orders o ON oi.order_id = o.id WHERE o.status IN ('completed', 'served') GROUP BY r.name, d.name ORDER BY total_revenue DESC LIMIT 10;
 
-14. Какие ингредиенты используются чаще всего в популярных блюдах?
-WITH popular_dishes AS (
-    SELECT d.id
-    FROM order_items oi
-    JOIN dishes d ON oi.dish_id = d.id
-    JOIN orders o ON oi.order_id = o.id
-    WHERE o.status IN ('completed', 'served')
-    GROUP BY d.id
-    ORDER BY SUM(oi.qty) DESC
-    LIMIT 10
-)
-SELECT
-    i.name AS ingredient,
-    SUM(di.qty_required * oi.qty) AS total_used_in_popular
-FROM order_items oi
-JOIN dishes d ON oi.dish_id = d.id
-JOIN dish_ingredients di ON d.id = di.dish_id
-JOIN ingredients i ON di.ingredient_id = i.id
-JOIN orders o ON oi.order_id = o.id
-JOIN popular_dishes pd ON d.id = pd.id
-WHERE o.status IN ('completed', 'served')
-GROUP BY i.name
-ORDER BY total_used_in_popular DESC;
+15. Какие ингредиенты используются чаще всего в популярных блюдах?
+WITH popular_dishes AS (SELECT d.id FROM order_items oi JOIN dishes d ON oi.dish_id = d.id JOIN orders o ON oi.order_id = o.id WHERE o.status IN ('completed', 'served') GROUP BY d.id ORDER BY SUM(oi.qty) DESC LIMIT 10) SELECT i.name AS ingredient, SUM(di.qty_required * oi.qty) AS total_used_in_popular FROM order_items oi JOIN dishes d ON oi.dish_id = d.id JOIN dish_ingredients di ON d.id = di.dish_id JOIN ingredients i ON di.ingredient_id = i.id JOIN orders o ON oi.order_id = o.id JOIN popular_dishes pd ON d.id = pd.id WHERE o.status IN ('completed', 'served') GROUP BY i.name ORDER BY total_used_in_popular DESC;
 
+16. Все сотрудники имеют аккаунты?
+SELECT e.full_name, u.username, aur.restaurant_id, ar.name AS role FROM employees e JOIN app_users u ON e.id = u.employee_id JOIN app_user_roles aur ON u.id = aur.user_id JOIN app_roles ar ON aur.role_id = ar.id ORDER BY e.full_name;
 
-Cluster 0 — популярные дешёвые
-Cluster 1 — редкие дорогие
-Cluster 2 — ключевые блюда меню
+17. ЗАКАЗЫ ОФИЦИАНТЫ - пользователи и роли
+SELECT u.username, ar.name AS role, r.name AS restaurant FROM app_user_roles aur JOIN app_users u ON aur.user_id = u.id JOIN app_roles ar ON aur.role_id = ar.id LEFT JOIN restaurants r ON aur.restaurant_id = r.id ORDER BY u.username;
 
-Все сотрудники имеют аккаунты?
-SELECT e.full_name, u.username, aur.restaurant_id, ar.name AS role
-FROM employees e
-JOIN app_users u ON e.id = u.employee_id
-JOIN app_user_roles aur ON u.id = aur.user_id
-JOIN app_roles ar ON aur.role_id = ar.id
-ORDER BY e.full_name;
+18. ЗАКАЗЫ ОФИЦИАНТЫ - заказы
+SELECT o.id AS order_id, r.name AS restaurant, e.full_name AS waiter_name, o.guest_name, o.order_time, o.status FROM orders o JOIN restaurants r ON o.restaurant_id = r.id JOIN app_users au ON o.created_by_user = au.id JOIN employees e ON au.employee_id = e.id WHERE e.position = 'Официант' ORDER BY o.order_time DESC;
 
-ЗАКАЗЫ ОФИЦИАНТЫ
-SELECT
-    u.username,
-    ar.name AS role,
-    r.name AS restaurant
-FROM app_user_roles aur
-JOIN app_users u ON aur.user_id = u.id
-JOIN app_roles ar ON aur.role_id = ar.id
-LEFT JOIN restaurants r ON aur.restaurant_id = r.id
-ORDER BY u.username;SELECT
-    o.id AS order_id,
-    r.name AS restaurant,
-    e.full_name AS waiter_name,
-    o.guest_name,
-    o.order_time,
-    o.status
-FROM orders o
-JOIN restaurants r ON o.restaurant_id = r.id
-JOIN app_users au ON o.created_by_user = au.id
-JOIN employees e ON au.employee_id = e.id
-WHERE e.position = 'Официант'
-ORDER BY o.order_time DESC;
+19. БЛЮДА
+SELECT id, restaurant_id, name FROM dishes ORDER BY id;
 
-БЛЮДА
-SELECT id, restaurant_id, name
-FROM dishes
-ORDER BY id;
-
-Проверка автозаявки
--- 1. Установите порог
-UPDATE ingredient_batches SET min_threshold = 100 WHERE ingredient_id = 5 AND restaurant_id = 1;
-
--- 2. Установите количество чуть выше порога
-UPDATE ingredient_batches SET qty = 300 WHERE ingredient_id = 5 AND restaurant_id = 1;
-
--- 3. Создайте заказ
-INSERT INTO orders (restaurant_id, guest_name, status, created_by_user)
-VALUES (1, 'Тест заявки', 'created', (SELECT id FROM app_users WHERE username = 'waiter1'))
-RETURNING id;  -- пусть будет 31
-
-INSERT INTO order_items (order_id, dish_id, qty, price_at_order)
-VALUES (31, 2, 2, 700);  -- Цезарь × 2 → 240 г курицы
-
--- 4. Финализируйте
+20. Проверка автозаявки - установка порога
 SELECT fn_finalize_order(31);
 
--- 5. Проверьте заявки
-SELECT * FROM purchase_requests
-WHERE restaurant_id = 1 AND ingredient_id = 5;
+21. Проверка автозаявки - проверка заявок
+SELECT * FROM purchase_requests WHERE restaurant_id = 1 AND ingredient_id = 5;
 
-Проверка доступности
--- Обнуляем моцареллу в Pasta House
-UPDATE ingredient_batches SET qty = 0, active = FALSE WHERE ingredient_id = 9 AND restaurant_id = 2;
-
--- Обновляем доступность блюд
+22. Проверка доступности - обновление доступности блюд
 SELECT fn_update_dishes_availability_for_restaurant(2);
 
--- Проверяем: Пицца Маргарита (dish_id=6) должна быть недоступна
--- SELECT name, is_available FROM dishes WHERE id = 6;
-
--- Создаём заказ (но НЕ финализируем, чтобы не ломать скрипт)
-INSERT INTO orders (restaurant_id, table_id, guest_name, status, created_by_user, order_time)
-VALUES (2, 1, 'Тест: Недоступная пицца', 'created', (SELECT id FROM app_users WHERE username = 'waiter3'), '2025-12-22 11:00:00')
-RETURNING id;
-
--- Пусть order_id = 32
-INSERT INTO order_items (order_id, dish_id, qty, price_at_order)
-VALUES (32, 6, 1, 800);  -- Пицца Маргарита
-
--- Проверяем альтернативы
+23. Проверка доступности - альтернативы
 SELECT * FROM fn_suggest_alternatives(6, 2);
--- ОЖИДАНИЕ: вернёт Пиццу Пепперони (та же категория, доступна)

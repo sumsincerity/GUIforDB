@@ -8,6 +8,8 @@ from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
 
+from app.security.sql_guard import validate_sql
+
 load_dotenv()
 
 app = Flask(__name__)
@@ -715,24 +717,50 @@ def action_query_run():
     if not has_perm("query"):
         flash("Нет доступа к SQL", "warning")
         return redirect(url_for("dashboard") + "#tab-query")
+
     sql = request.form.get("sql", "").strip()
     if not sql:
         flash("Запрос пустой", "warning")
         return redirect(url_for("dashboard") + "#tab-query")
+
+    # === SQL GUARD (Rule-based + ML) ===
+    guard_result = validate_sql(sql)
+    if not guard_result["allowed"]:
+        if guard_result.get("layer") == "rule_based":
+            flash(
+                f"Запрос заблокирован правилами безопасности: {guard_result.get('reason')}",
+                "danger"
+            )
+        else:
+            flash(
+                f"Запрос выглядит опасным и был заблокирован (risk={guard_result.get('risk_score')})",
+                "danger"
+            )
+        return redirect(url_for("dashboard") + "#tab-query")
+    # ==================================
+
     try:
         with get_db_conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(sql)
+
             if cur.description:
                 rows = cur.fetchall()
                 cols = list(rows[0].keys()) if rows else [d.name for d in cur.description]
-                session["query_last"] = {"cols": cols, "rows": rows}
+
+                session["query_last"] = {
+                    "cols": cols,
+                    "rows": rows
+                }
                 flash(f"Результат: {len(rows)} строк", "success")
             else:
                 flash(f"OK, изменено строк: {cur.rowcount}", "success")
                 session["query_last"] = None
+
     except Exception as ex:
         flash(f"Ошибка запроса: {ex}", "danger")
+
     return redirect(url_for("dashboard") + "#tab-query")
+
 
 
 @app.post("/action/context/set")
