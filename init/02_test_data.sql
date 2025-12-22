@@ -18,6 +18,15 @@ INSERT INTO restaurants (city_id, name, address, postal_code, phone, capacity, t
 (3, 'Volga Food', 'Баумана, 5', '442966', '+7(967)-711-714', 180, 80),
 (4, 'Siberia Grill', 'Ленина, 20', '442967', '+7(967)-711-715', 200, 100),
 (5, 'Balzi Rossi', 'Красная пресня, 15', '442968', '+7(967)-711-716', 300, 125);
+
+-- Установим лимиты одновременных заказов
+UPDATE restaurants SET max_concurrent_orders = 8 WHERE name = 'Central Restaurant';
+UPDATE restaurants SET max_concurrent_orders = 10 WHERE name = 'Pasta House';
+UPDATE restaurants SET max_concurrent_orders = 12 WHERE name = 'Nord Cafe';
+UPDATE restaurants SET max_concurrent_orders = 15 WHERE name = 'Volga Food';
+UPDATE restaurants SET max_concurrent_orders = 20 WHERE name = 'Siberia Grill';
+UPDATE restaurants SET max_concurrent_orders = 25 WHERE name = 'Balzi Rossi';
+
 -- =========================
 -- РОЛИ (бизнес)
 -- =========================
@@ -141,47 +150,47 @@ INSERT INTO app_users (employee_id, username, password_hash)
 SELECT
     (SELECT id FROM employees WHERE email = 'admin@example.com'),
     'admin',
-    '$2b$12$8UWu08SEa7byZNCr.3uVx.W64.M4xbcaioHLs/GfRj9tXbTMTtbAe'  -- hash для пароля "password"
+    '$2b$12$1AMPamVyeyPegSuvFTeNYuWdbIvJoxj3mkSRwzk4Ph4QNiJybmsGa'
 ON CONFLICT (username) DO NOTHING;
 
 -- Менеджеры
 INSERT INTO app_users (employee_id, username, password_hash) VALUES
-((SELECT id FROM employees WHERE full_name = 'Андрей Менеджер'), 'manager1', '$2b$12$aVEUyQMJMSgSpBYY/MDha.hPFr/PanIsffYcPsLMKCsmE2Oq05x62'),
-((SELECT id FROM employees WHERE full_name = 'Виктор Менеджер'), 'manager2', '$2b$12$4Tm2Z3Y6sQqW9X7a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u'),
-((SELECT id FROM employees WHERE full_name = 'Станислав Менеджер'), 'manager3', '$2b$12$4Tm2Z3Y6sQqW9X7a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u'),
-((SELECT id FROM employees WHERE full_name = 'Роман Менеджер'), 'manager4', '$2b$12$4Tm2Z3Y6sQqW9X7a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u'),
-((SELECT id FROM employees WHERE full_name = 'Кирилл Менеджер'), 'manager5', '$2b$12$4Tm2Z3Y6sQqW9X7a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u'),
-((SELECT id FROM employees WHERE full_name = 'Александр Менеджер'), 'manager6', '$2b$12$4Tm2Z3Y6sQqW9X7a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u');
+((SELECT id FROM employees WHERE full_name = 'Андрей Менеджер'), 'manager1', '$2b$12$583K3CXWuBtyCFp6pHpZieflzlygT/f31LIq2rZ0rV21svvX53ac.'),
+((SELECT id FROM employees WHERE full_name = 'Виктор Менеджер'), 'manager2', '$2b$12$583K3CXWuBtyCFp6pHpZieflzlygT/f31LIq2rZ0rV21svvX53ac.'),
+((SELECT id FROM employees WHERE full_name = 'Станислав Менеджер'), 'manager3', '$2b$12$583K3CXWuBtyCFp6pHpZieflzlygT/f31LIq2rZ0rV21svvX53ac.'),
+((SELECT id FROM employees WHERE full_name = 'Роман Менеджер'), 'manager4', '$2b$12$583K3CXWuBtyCFp6pHpZieflzlygT/f31LIq2rZ0rV21svvX53ac.'),
+((SELECT id FROM employees WHERE full_name = 'Кирилл Менеджер'), 'manager5', '$2b$12$583K3CXWuBtyCFp6pHpZieflzlygT/f31LIq2rZ0rV21svvX53ac.'),
+((SELECT id FROM employees WHERE full_name = 'Александр Менеджер'), 'manager6', '$2b$12$583K3CXWuBtyCFp6pHpZieflzlygT/f31LIq2rZ0rV21svvX53ac.');
 
 -- Повара
 INSERT INTO app_users (employee_id, username, password_hash) VALUES
-((SELECT id FROM employees WHERE full_name = 'Павел Повар'), 'cook1', '$2b$12$4Tm2Z3Y6sQqW9X7a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u'),
-((SELECT id FROM employees WHERE full_name = 'Артем Повар'), 'cook2', '$2b$12$4Tm2Z3Y6sQqW9X7a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u'),
-((SELECT id FROM employees WHERE full_name = 'Денис Повар'), 'cook3', '$2b$12$4Tm2Z3Y6sQqW9X7a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u'),
-((SELECT id FROM employees WHERE full_name = 'Максим Повар'), 'cook4', '$2b$12$4Tm2Z3Y6sQqW9X7a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u'),
-((SELECT id FROM employees WHERE full_name = 'Игорь Повар'), 'cook5', '$2b$12$4Tm2Z3Y6sQqW9X7a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u'),
-((SELECT id FROM employees WHERE full_name = 'Евгений Повар'), 'cook6', '$2b$12$4Tm2Z3Y6sQqW9X7a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u');
+((SELECT id FROM employees WHERE full_name = 'Павел Повар'), 'cook1', '$2b$12$583K3CXWuBtyCFp6pHpZieflzlygT/f31LIq2rZ0rV21svvX53ac.'),
+((SELECT id FROM employees WHERE full_name = 'Артем Повар'), 'cook2', '$2b$12$583K3CXWuBtyCFp6pHpZieflzlygT/f31LIq2rZ0rV21svvX53ac.'),
+((SELECT id FROM employees WHERE full_name = 'Денис Повар'), 'cook3', '$2b$12$583K3CXWuBtyCFp6pHpZieflzlygT/f31LIq2rZ0rV21svvX53ac.'),
+((SELECT id FROM employees WHERE full_name = 'Максим Повар'), 'cook4', '$2b$12$583K3CXWuBtyCFp6pHpZieflzlygT/f31LIq2rZ0rV21svvX53ac.'),
+((SELECT id FROM employees WHERE full_name = 'Игорь Повар'), 'cook5', '$2b$12$583K3CXWuBtyCFp6pHpZieflzlygT/f31LIq2rZ0rV21svvX53ac.'),
+((SELECT id FROM employees WHERE full_name = 'Евгений Повар'), 'cook6', '$2b$12$583K3CXWuBtyCFp6pHpZieflzlygT/f31LIq2rZ0rV21svvX53ac.');
 
 -- Официанты
 INSERT INTO app_users (employee_id, username, password_hash) VALUES
 -- Central
-((SELECT id FROM employees WHERE full_name = 'Ирина Официант'), 'waiter1', '$2b$12$4Tm2Z3Y6sQqW9X7a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u'),
-((SELECT id FROM employees WHERE full_name = 'Ольга Официант'), 'waiter2', '$2b$12$4Tm2Z3Y6sQqW9X7a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u'),
+((SELECT id FROM employees WHERE full_name = 'Ирина Официант'), 'waiter1', '$2b$12$583K3CXWuBtyCFp6pHpZieflzlygT/f31LIq2rZ0rV21svvX53ac.'),
+((SELECT id FROM employees WHERE full_name = 'Ольга Официант'), 'waiter2', '$2b$12$583K3CXWuBtyCFp6pHpZieflzlygT/f31LIq2rZ0rV21svvX53ac.'),
 -- Pasta House
-((SELECT id FROM employees WHERE full_name = 'Марина Официант'), 'waiter3', '$2b$12$4Tm2Z3Y6sQqW9X7a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u'),
-((SELECT id FROM employees WHERE full_name = 'Никита Официант'), 'waiter4', '$2b$12$4Tm2Z3Y6sQqW9X7a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u'),
+((SELECT id FROM employees WHERE full_name = 'Марина Официант'), 'waiter3', '$2b$12$583K3CXWuBtyCFp6pHpZieflzlygT/f31LIq2rZ0rV21svvX53ac.'),
+((SELECT id FROM employees WHERE full_name = 'Никита Официант'), 'waiter4', '$2b$12$583K3CXWuBtyCFp6pHpZieflzlygT/f31LIq2rZ0rV21svvX53ac.'),
 -- Nord Cafe
-((SELECT id FROM employees WHERE full_name = 'Елена Официант'), 'waiter5', '$2b$12$4Tm2Z3Y6sQqW9X7a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u'),
-((SELECT id FROM employees WHERE full_name = 'Юлия Официант'), 'waiter6', '$2b$12$4Tm2Z3Y6sQqW9X7a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u'),
+((SELECT id FROM employees WHERE full_name = 'Елена Официант'), 'waiter5', '$2b$12$583K3CXWuBtyCFp6pHpZieflzlygT/f31LIq2rZ0rV21svvX53ac.'),
+((SELECT id FROM employees WHERE full_name = 'Юлия Официант'), 'waiter6', '$2b$12$583K3CXWuBtyCFp6pHpZieflzlygT/f31LIq2rZ0rV21svvX53ac.'),
 -- Volga Food
-((SELECT id FROM employees WHERE full_name = 'Антон Официант'), 'waiter7', '$2b$12$4Tm2Z3Y6sQqW9X7a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u'),
-((SELECT id FROM employees WHERE full_name = 'Дарья Официант'), 'waiter8', '$2b$12$4Tm2Z3Y6sQqW9X7a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u'),
+((SELECT id FROM employees WHERE full_name = 'Антон Официант'), 'waiter7', '$2b$12$583K3CXWuBtyCFp6pHpZieflzlygT/f31LIq2rZ0rV21svvX53ac.'),
+((SELECT id FROM employees WHERE full_name = 'Дарья Официант'), 'waiter8', '$2b$12$583K3CXWuBtyCFp6pHpZieflzlygT/f31LIq2rZ0rV21svvX53ac.'),
 -- Siberia Grill
-((SELECT id FROM employees WHERE full_name = 'Полина Официант'), 'waiter9', '$2b$12$4Tm2Z3Y6sQqW9X7a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u'),
-((SELECT id FROM employees WHERE full_name = 'Валерия Официант'), 'waiter10', '$2b$12$4Tm2Z3Y6sQqW9X7a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u'),
+((SELECT id FROM employees WHERE full_name = 'Полина Официант'), 'waiter9', '$2b$12$583K3CXWuBtyCFp6pHpZieflzlygT/f31LIq2rZ0rV21svvX53ac.'),
+((SELECT id FROM employees WHERE full_name = 'Валерия Официант'), 'waiter10', '$2b$12$583K3CXWuBtyCFp6pHpZieflzlygT/f31LIq2rZ0rV21svvX53ac.'),
 -- Balzi Rossi
-((SELECT id FROM employees WHERE full_name = 'Ксения Официант'), 'waiter11', '$2b$12$4Tm2Z3Y6sQqW9X7a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u'),
-((SELECT id FROM employees WHERE full_name = 'Алина Официант'), 'waiter12', '$2b$12$4Tm2Z3Y6sQqW9X7a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u');
+((SELECT id FROM employees WHERE full_name = 'Ксения Официант'), 'waiter11', '$2b$12$583K3CXWuBtyCFp6pHpZieflzlygT/f31LIq2rZ0rV21svvX53ac.'),
+((SELECT id FROM employees WHERE full_name = 'Алина Официант'), 'waiter12', '$2b$12$583K3CXWuBtyCFp6pHpZieflzlygT/f31LIq2rZ0rV21svvX53ac.');
 
 
 INSERT INTO app_user_roles (user_id, role_id, restaurant_id)
@@ -450,17 +459,17 @@ INSERT INTO ingredient_batches (ingredient_id, restaurant_id, batch_no, min_thre
 
 -- Balzi Rossi (id=6): Итальянская пицца
 INSERT INTO ingredient_batches (ingredient_id, restaurant_id, batch_no, min_threshold, qty, expiry_date) VALUES
-(5, 6, 'CHICKEN-BALZI', 5, 3000, now() + interval '6 days'),   -- Курица
-(6, 6, 'SALAD-BALZI', 5, 2000, now() + interval '10 days'),  -- Салат
-(7, 6, 'FLOUR-BALZI', 200, 3000, now() + interval '20 days'),  -- Мука
+(5, 6, 'CHICKEN-BALZI', 5, 3000, now() + interval '6 days'), -- курица
+(6, 6, 'SALAD-BALZI', 5, 2000, now() + interval '10 days'), -- салат
+(7, 6, 'FLOUR-BALZI', 200, 3000, now() + interval '20 days'), -- мука
 (8, 6, 'TOMATO-BALZI', 150, 2000, now() + interval '10 days'), -- Томаты
 (9, 6, 'MOZARELLA-BALZI', 100, 1500, now() + interval '15 days'), -- Моцарелла
 (11, 6, 'VEG-BALZI', 100, 1500, now() + interval '15 days'), -- Овощи
 (13, 6, 'SALMON-BALZI', 100, 1500, now() + interval '15 days'), -- Лосось
 (14, 6, 'MORTA-BALZI', 50, 5000, now() + interval '12 days'), -- Мортаделла
-(15, 6, 'RICE-BALZI', 100, 1500, now() + interval '15 days'),
-(17, 6, 'CUCUMBER-BALZI', 100, 1500, now() + interval '15 days'),
-(18, 6, 'MASLIN-BALZI', 100, 1500, now() + interval '15 days');
+(15, 6, 'RICE-BALZI', 100, 1500, now() + interval '15 days'), -- рис
+(17, 6, 'CUCUMBER-BALZI', 100, 1500, now() + interval '15 days'), -- огурец
+(18, 6, 'MASLIN-BALZI', 100, 1500, now() + interval '15 days'); -- маслины
 
 
 -- =========================
@@ -668,31 +677,31 @@ INSERT INTO order_items (order_id, dish_id, qty, price_at_order) VALUES
 -- =========================
 -- ФИНАЛИЗАЦИЯ ЧАСТИ ЗАКАЗОВ
 -- =========================
-SELECT fn_finalize_order(1);
-SELECT fn_finalize_order(2);
-SELECT fn_finalize_order(3);
-SELECT fn_finalize_order(4);
-SELECT fn_finalize_order(5);
-SELECT fn_finalize_order(6);
-SELECT fn_finalize_order(7);
-SELECT fn_finalize_order(8);
-SELECT fn_finalize_order(9);
-SELECT fn_finalize_order(10);
-SELECT fn_finalize_order(11);
-SELECT fn_finalize_order(12);
-SELECT fn_finalize_order(14);
-SELECT fn_finalize_order(15);
-SELECT fn_finalize_order(16);
-SELECT fn_finalize_order(17);
-SELECT fn_finalize_order(18);
-SELECT fn_finalize_order(19);
-SELECT fn_finalize_order(21);
-SELECT fn_finalize_order(22);
-SELECT fn_finalize_order(23);
-SELECT fn_finalize_order(24);
-SELECT fn_finalize_order(25);
-SELECT fn_finalize_order(26);
-SELECT fn_finalize_order(27);
-SELECT fn_finalize_order(28);
-SELECT fn_finalize_order(29);
-SELECT fn_finalize_order(30);
+SELECT fn_finalize_order(1, (SELECT id FROM app_users WHERE username = 'waiter1'));
+SELECT fn_finalize_order(2, (SELECT id FROM app_users WHERE username = 'waiter2'));
+SELECT fn_finalize_order(3, (SELECT id FROM app_users WHERE username = 'waiter3'));
+SELECT fn_finalize_order(4, (SELECT id FROM app_users WHERE username = 'waiter4'));
+SELECT fn_finalize_order(5, (SELECT id FROM app_users WHERE username = 'waiter5'));
+SELECT fn_finalize_order(6, (SELECT id FROM app_users WHERE username = 'waiter6'));
+SELECT fn_finalize_order(7, (SELECT id FROM app_users WHERE username = 'waiter7'));
+SELECT fn_finalize_order(8, (SELECT id FROM app_users WHERE username = 'waiter8'));
+SELECT fn_finalize_order(9, (SELECT id FROM app_users WHERE username = 'waiter9'));
+SELECT fn_finalize_order(10, (SELECT id FROM app_users WHERE username = 'waiter10'));
+SELECT fn_finalize_order(11, (SELECT id FROM app_users WHERE username = 'waiter12'));
+SELECT fn_finalize_order(12, (SELECT id FROM app_users WHERE username = 'waiter12'));
+SELECT fn_finalize_order(14, (SELECT id FROM app_users WHERE username = 'waiter2'));
+SELECT fn_finalize_order(15, (SELECT id FROM app_users WHERE username = 'waiter3'));
+SELECT fn_finalize_order(16, (SELECT id FROM app_users WHERE username = 'waiter4'));
+SELECT fn_finalize_order(17, (SELECT id FROM app_users WHERE username = 'waiter5'));
+SELECT fn_finalize_order(18, (SELECT id FROM app_users WHERE username = 'waiter6'));
+SELECT fn_finalize_order(19, (SELECT id FROM app_users WHERE username = 'waiter7'));
+SELECT fn_finalize_order(21, (SELECT id FROM app_users WHERE username = 'waiter9'));
+SELECT fn_finalize_order(22, (SELECT id FROM app_users WHERE username = 'waiter10'));
+SELECT fn_finalize_order(23, (SELECT id FROM app_users WHERE username = 'waiter11'));
+SELECT fn_finalize_order(24, (SELECT id FROM app_users WHERE username = 'waiter12'));
+SELECT fn_finalize_order(25, (SELECT id FROM app_users WHERE username = 'waiter1'));
+SELECT fn_finalize_order(26, (SELECT id FROM app_users WHERE username = 'waiter2'));
+SELECT fn_finalize_order(27, (SELECT id FROM app_users WHERE username = 'waiter3'));
+SELECT fn_finalize_order(28, (SELECT id FROM app_users WHERE username = 'waiter4'));
+SELECT fn_finalize_order(29, (SELECT id FROM app_users WHERE username = 'waiter5'));
+SELECT fn_finalize_order(30, (SELECT id FROM app_users WHERE username = 'waiter6'));
