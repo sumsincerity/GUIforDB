@@ -1,4 +1,4 @@
-# Restaurant DB GUI
+# Restaurant DB GAY
 
 Простой графический интерфейс на Python для работы с PostgreSQL базой из `init.sql` / `docker-compose.yml`.
 
