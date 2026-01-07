@@ -182,6 +182,7 @@ def get_malicious_test_queries() -> list[tuple[str, str]]:
         ("CREATE TABLE", "CREATE TABLE hacked (id INT)"),
         ("GRANT", "GRANT ALL ON users TO public"),
     ]
+#SELECT * FROM users WHERE id = 1 OR 1=1
 
 if __name__ == '__main__':
     import sys
