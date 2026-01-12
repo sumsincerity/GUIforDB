@@ -288,30 +288,6 @@ RETURNS VOID LANGUAGE sql AS $$
     WHERE id = p_order_id;
 $$;
 
--- Обновляет is_available у блюд
-CREATE OR REPLACE FUNCTION fn_update_dishes_availability_for_restaurant(p_restaurant_id INT)
-RETURNS VOID LANGUAGE plpgsql AS $$
-DECLARE
-    rec_dish RECORD;
-    missing_count INT;
-BEGIN
-    FOR rec_dish IN SELECT * FROM dishes WHERE restaurant_id = p_restaurant_id
-    LOOP
-        SELECT COUNT(*) INTO missing_count
-        FROM dish_ingredients di
-        LEFT JOIN (
-            SELECT ingredient_id, SUM(qty) AS total_qty
-            FROM ingredient_batches
-            WHERE restaurant_id = p_restaurant_id AND active = TRUE
-            GROUP BY ingredient_id
-        ) ib ON di.ingredient_id = ib.ingredient_id
-        WHERE di.dish_id = rec_dish.id AND COALESCE(ib.total_qty,0) < di.qty_required;
-
-        UPDATE dishes SET is_available = (missing_count = 0) WHERE id = rec_dish.id;
-    END LOOP;
-END;
-$$;
-
 --  оценки и комментарии к заказам.
 CREATE TABLE feedbacks (
     id SERIAL PRIMARY KEY,
@@ -364,75 +340,6 @@ DECLARE
 BEGIN
     -- Получаем restaurant_id один раз
     SELECT restaurant_id INTO v_restaurant_id FROM orders WHERE id = p_order_id;
-
-    -- Для всех позиций заказа
-    FOR rec_item IN SELECT * FROM order_items WHERE order_id = p_order_id
-    LOOP
-        -- Для всех ингредиентов блюда
-        FOR rec_recipe IN SELECT * FROM dish_ingredients WHERE dish_id = rec_item.dish_id
-        LOOP
-            v_needed := rec_recipe.qty_required * rec_item.qty;
-
-            LOOP
-                IF v_needed <= 0 THEN
-                    EXIT;
-                END IF;
-
-                SELECT * INTO v_batch FROM ingredient_batches
-                WHERE ingredient_id = rec_recipe.ingredient_id
-                  AND restaurant_id = v_restaurant_id
-                  AND active = TRUE
-                  AND qty > 0
-                ORDER BY COALESCE(expiry_date, 'infinity') ASC
-                FOR UPDATE
-                LIMIT 1;
-
-                IF NOT FOUND THEN
-                    RAISE EXCEPTION 'Не хватает ингридиента % для ресторана % нужно %',
-                        rec_recipe.ingredient_id, v_restaurant_id, v_needed;
-                END IF;
-
-                IF v_batch.qty >= v_needed THEN
-                    UPDATE ingredient_batches SET qty = qty - v_needed WHERE id = v_batch.id;
-                    INSERT INTO inventory_movements (batch_id, ingredient_id, restaurant_id, change_qty, reason, related_order_id)
-                    VALUES (v_batch.id, rec_recipe.ingredient_id, v_restaurant_id, -v_needed, 'order', p_order_id);
-                    v_needed := 0;
-                ELSE
-                    v_left := v_batch.qty;
-                    UPDATE ingredient_batches SET qty = 0, active = FALSE WHERE id = v_batch.id;
-                    INSERT INTO inventory_movements (batch_id, ingredient_id, restaurant_id, change_qty, reason, related_order_id)
-                    VALUES (v_batch.id, rec_recipe.ingredient_id, v_restaurant_id, -v_left, 'order', p_order_id);
-                    v_needed := v_needed - v_left;
-                END IF;
-            END LOOP;
-
-            -- Получаем минимальный порог для этого ингредиента в ресторане
-            SELECT COALESCE(MIN(min_threshold), 5) INTO v_min_threshold
-            FROM ingredient_batches
-            WHERE ingredient_id = rec_recipe.ingredient_id
-              AND restaurant_id = v_restaurant_id;
-
-            -- Проверяем общий остаток по ингредиенту
-            SELECT COALESCE(SUM(qty), 0) INTO v_total_left
-            FROM ingredient_batches
-            WHERE ingredient_id = rec_recipe.ingredient_id
-              AND restaurant_id = v_restaurant_id
-              AND active = TRUE;
-
-            -- Если остаток <= порога — создаём заявку
-            IF v_total_left <= v_min_threshold THEN
-                IF NOT EXISTS (
-                    SELECT 1 FROM purchase_requests
-                    WHERE restaurant_id = v_restaurant_id
-                      AND ingredient_id = rec_recipe.ingredient_id
-                      AND status IN ('new','ordered')
-                ) THEN
-                    INSERT INTO purchase_requests (restaurant_id, ingredient_id, qty, status)
-                    VALUES (v_restaurant_id, rec_recipe.ingredient_id, v_min_threshold * 10, 'new');
-                END IF;
-            END IF;
-        END LOOP;
-    END LOOP;
 
     -- Обновляем доступность блюд
     PERFORM fn_update_dishes_availability_for_restaurant(v_restaurant_id);
